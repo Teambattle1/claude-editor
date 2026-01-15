@@ -1,0 +1,15 @@
+{
+  "name": "claude-editor",
+  "version": "1.0.0",
+  "description": "Visual Claude Editor with live preview",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-pty": "^1.1.0",
+    "ws": "^8.16.0"
+  }
+}

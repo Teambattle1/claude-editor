@@ -1,0 +1,2796 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Editor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg-primary: #0d0d0d;
+      --bg-secondary: #141414;
+      --bg-tertiary: #1a1a1a;
+      --bg-hover: #222222;
+      --border: #2a2a2a;
+      --border-focus: #cc785c;
+      --text-primary: #ffffff;
+      --text-secondary: #a0a0a0;
+      --text-muted: #666666;
+      --accent: #cc785c;
+      --accent-hover: #e08b6a;
+      --accent-glow: rgba(204, 120, 92, 0.3);
+      --success: #4ade80;
+      --warning: #fbbf24;
+      --error: #f87171;
+      --terminal-bg: #0a0a0a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      height: 60px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent), #e08b6a);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      color: white;
+      box-shadow: 0 4px 12px var(--accent-glow);
+    }
+
+    .logo-text {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+    }
+
+    .logo-text span {
+      color: var(--accent);
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    /* Dropdown */
+    .dropdown-wrapper {
+      position: relative;
+    }
+
+    .dropdown-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .dropdown {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 40px 10px 14px;
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: inherit;
+      cursor: pointer;
+      min-width: 200px;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      transition: all 0.2s ease;
+    }
+
+    .dropdown:hover {
+      border-color: var(--text-muted);
+    }
+
+    .dropdown:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    /* Buttons */
+    .btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #e08b6a);
+      color: white;
+      box-shadow: 0 2px 8px var(--accent-glow);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px var(--accent-glow);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-hover);
+      border-color: var(--text-muted);
+    }
+
+    .btn-success {
+      background: linear-gradient(135deg, #059669, #10b981);
+      color: white;
+    }
+
+    .btn-success:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-danger {
+      background: var(--bg-tertiary);
+      color: var(--error);
+      border: 1px solid var(--error);
+    }
+
+    .btn-danger:hover {
+      background: rgba(248, 113, 113, 0.1);
+    }
+
+    /* Netlify Status Indicator */
+    .netlify-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .netlify-status:hover {
+      border-color: var(--text-muted);
+    }
+
+    .netlify-status.running {
+      border-color: var(--success);
+      color: var(--success);
+    }
+
+    .netlify-status.running .netlify-dot {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .netlify-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: all 0.2s ease;
+    }
+
+    /* Service Link Buttons */
+    .service-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 8px;
+      padding-left: 16px;
+      border-left: 1px solid var(--border);
+    }
+
+    .service-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .service-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .service-btn:not(:disabled):hover {
+      transform: translateY(-1px);
+    }
+
+    /* GitHub */
+    .github-btn {
+      color: #f0f0f0;
+    }
+    .github-btn:not(:disabled):hover {
+      background: #24292e;
+      border-color: #24292e;
+      box-shadow: 0 4px 12px rgba(36, 41, 46, 0.4);
+    }
+
+    /* Netlify */
+    .netlify-btn {
+      color: #00C7B7;
+    }
+    .netlify-btn:not(:disabled):hover {
+      background: rgba(0, 199, 183, 0.15);
+      border-color: #00C7B7;
+      box-shadow: 0 4px 12px rgba(0, 199, 183, 0.3);
+    }
+
+    /* Supabase */
+    .supabase-btn {
+      color: #3ECF8E;
+    }
+    .supabase-btn:not(:disabled):hover {
+      background: rgba(62, 207, 142, 0.15);
+      border-color: #3ECF8E;
+      box-shadow: 0 4px 12px rgba(62, 207, 142, 0.3);
+    }
+
+    /* Credentials */
+    .credentials-wrapper {
+      position: relative;
+    }
+
+    .credentials-btn {
+      color: var(--accent);
+    }
+    .credentials-btn:not(:disabled):hover {
+      background: rgba(204, 120, 92, 0.15);
+      border-color: var(--accent);
+    }
+    .credentials-btn.has-credentials {
+      color: var(--success);
+    }
+    .credentials-btn.has-credentials:not(:disabled):hover {
+      background: rgba(74, 222, 128, 0.15);
+      border-color: var(--success);
+    }
+
+    .credentials-dropdown {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 8px;
+      width: 280px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      z-index: 1000;
+      overflow: hidden;
+    }
+
+    .credentials-dropdown.show {
+      display: block;
+    }
+
+    .credentials-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+    }
+    .close-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .credentials-form {
+      padding: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: inherit;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .credentials-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .btn-small {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s ease;
+    }
+
+    .btn-small.btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+    .btn-small.btn-primary:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-small.btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+    .btn-small.btn-secondary:hover {
+      background: var(--bg-hover);
+    }
+
+    .credentials-info {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+
+    .credentials-info small {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    /* Main Layout */
+    .main {
+      display: flex;
+      height: calc(100vh - 60px);
+    }
+
+    /* Left Panel - Editor/Terminal */
+    .left-panel {
+      flex: 1;
+      min-width: 300px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      background: var(--bg-secondary);
+    }
+
+    /* Resize Handle */
+    .resize-handle {
+      width: 6px;
+      background: var(--border);
+      cursor: col-resize;
+      transition: background 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .resize-handle:hover,
+    .resize-handle.dragging {
+      background: var(--accent);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-tabs {
+      display: flex;
+      gap: 4px;
+    }
+
+    .panel-tab {
+      padding: 6px 14px;
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .panel-tab:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .panel-tab.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    .panel-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .status-dot.active {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .status-text {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    /* Tasks Container */
+    .tasks-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .tasks-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: var(--bg-primary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tasks-title {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .new-task-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .new-task-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .tasks-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .tasks-list::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .tasks-list::-webkit-scrollbar-track {
+      background: var(--bg-primary);
+    }
+
+    .tasks-list::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    /* Task Item */
+    .task-item {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+
+    .task-item.active {
+      border-color: var(--accent);
+    }
+
+    .task-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .task-header:hover {
+      background: var(--bg-hover);
+    }
+
+    .task-toggle {
+      color: var(--text-muted);
+      transition: transform 0.2s ease;
+    }
+
+    .task-item.expanded .task-toggle {
+      transform: rotate(90deg);
+    }
+
+    .task-number {
+      background: var(--accent);
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+      min-width: 24px;
+      text-align: center;
+    }
+
+    .task-item.completed .task-number {
+      background: var(--success);
+    }
+
+    .task-prompt {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .task-status {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .task-status.running {
+      background: rgba(204, 120, 92, 0.2);
+      color: var(--accent);
+    }
+
+    .task-status.completed {
+      background: rgba(74, 222, 128, 0.2);
+      color: var(--success);
+    }
+
+    .task-status.pending {
+      background: var(--bg-hover);
+      color: var(--text-muted);
+    }
+
+    .task-content {
+      display: none;
+      border-top: 1px solid var(--border);
+    }
+
+    .task-item.expanded .task-content {
+      display: block;
+    }
+
+    .task-output {
+      padding: 12px;
+      background: var(--terminal-bg);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      max-height: 400px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .task-output::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .task-output::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    /* Command blocks within tasks */
+    .command-block {
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .command-block:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+
+    .command-prompt {
+      color: var(--accent);
+      font-weight: 500;
+      margin-bottom: 8px;
+      padding: 8px;
+      background: rgba(204, 120, 92, 0.1);
+      border-radius: 4px;
+    }
+
+    .command-output {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Task stop button */
+    .task-stop-btn {
+      background: var(--error);
+      color: white;
+      border: none;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-left: 8px;
+    }
+
+    .task-stop-btn:hover {
+      background: #dc2626;
+    }
+
+    /* Task complete badge */
+    .task-complete-badge {
+      background: var(--success);
+      color: #000;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    /* Welcome message in empty state */
+    .welcome-message {
+      padding: 24px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .welcome-message h3 {
+      color: var(--accent);
+      margin-bottom: 12px;
+      font-size: 16px;
+    }
+
+    .welcome-message p {
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    /* Command Input - Chat Style */
+    .command-input-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 16px;
+      background: var(--bg-tertiary);
+      border-top: 1px solid var(--border);
+    }
+
+    .input-container {
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      background: var(--bg-primary);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      transition: all 0.2s ease;
+    }
+
+    .input-container:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .input-container.drag-over {
+      border-color: var(--accent);
+      background: rgba(204, 120, 92, 0.1);
+    }
+
+    .input-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .attached-files {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .attached-file {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .attached-file img {
+      width: 32px;
+      height: 32px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+
+    .attached-file .file-icon {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-hover);
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .attached-file .remove-file {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    }
+
+    .attached-file .remove-file:hover {
+      background: var(--error);
+      color: white;
+    }
+
+    .command-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      resize: none;
+      min-height: 84px;
+      max-height: 200px;
+      line-height: 1.5;
+    }
+
+    .command-input:focus {
+      outline: none;
+    }
+
+    .command-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .input-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .upload-btn {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .upload-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--accent);
+    }
+
+    .send-btn {
+      padding: 10px 16px;
+      border-radius: 8px;
+    }
+
+    .drop-hint {
+      text-align: center;
+      padding: 8px;
+      color: var(--text-muted);
+      font-size: 12px;
+      display: none;
+    }
+
+    .input-container.drag-over .drop-hint {
+      display: block;
+      color: var(--accent);
+    }
+
+    /* Right Panel - Preview */
+    .right-panel {
+      width: 50%;
+      min-width: 300px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-secondary);
+    }
+
+    .preview-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .preview-tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--bg-primary);
+      padding: 4px;
+      border-radius: 8px;
+    }
+
+    .preview-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .preview-tab:hover {
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+    }
+
+    .preview-tab.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    .preview-tab.active svg {
+      color: white;
+    }
+
+    .preview-tab[data-preview="vite"] svg {
+      color: #646cff;
+    }
+
+    .preview-tab[data-preview="netlify"] svg {
+      color: #00C7B7;
+    }
+
+    .preview-tab.active[data-preview="vite"] svg,
+    .preview-tab.active[data-preview="netlify"] svg {
+      color: white;
+    }
+
+    .preview-tab .needs-netlify {
+      width: 6px;
+      height: 6px;
+      background: #00C7B7;
+      border-radius: 50%;
+      margin-left: 4px;
+    }
+
+    .open-external-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-left: 4px;
+    }
+
+    .open-external-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .device-toggles {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg-primary);
+      border-radius: 8px;
+      padding: 4px;
+    }
+
+    .device-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 28px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .device-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+    }
+
+    .device-btn.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    .orientation-toggles {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg-primary);
+      border-radius: 8px;
+      padding: 4px;
+    }
+
+    .orientation-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .orientation-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+    }
+
+    .orientation-btn.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    .preview-url {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .url-bar {
+      flex: 1;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      min-width: 100px;
+    }
+
+    .refresh-btn {
+      padding: 6px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .refresh-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .preview-content {
+      flex: 1;
+      position: relative;
+      background: #1a1a1a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .preview-frame-container {
+      background: white;
+      box-shadow: 0 0 40px rgba(0,0,0,0.5);
+      transition: all 0.3s ease;
+      overflow: hidden;
+    }
+
+    .preview-frame-container.fullsize {
+      width: 100% !important;
+      height: 100% !important;
+      box-shadow: none;
+    }
+
+    .preview-iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: white;
+    }
+
+    .device-label {
+      position: absolute;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .preview-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      gap: 16px;
+    }
+
+    .preview-placeholder-icon {
+      width: 80px;
+      height: 80px;
+      background: var(--bg-tertiary);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+    }
+
+    .preview-placeholder-text {
+      font-size: 14px;
+      text-align: center;
+      max-width: 280px;
+      line-height: 1.6;
+    }
+
+    /* Netlify Status Bar */
+    .netlify-status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: var(--bg-tertiary);
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+    }
+
+    .netlify-status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+    }
+
+    .status-dot-small {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .status-dot-small.running {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .status-dot-small.error {
+      background: var(--error);
+    }
+
+    .netlify-port {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--accent);
+      font-size: 11px;
+    }
+
+    /* Loading Overlay */
+    .loading-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(13, 13, 13, 0.95);
+      z-index: 2000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .loading-overlay.show {
+      display: flex;
+    }
+
+    .loading-content {
+      text-align: center;
+      padding: 40px;
+    }
+
+    .loading-spinner {
+      width: 60px;
+      height: 60px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      margin: 0 auto 24px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+
+    .loading-countdown {
+      font-size: 16px;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+    }
+
+    .loading-countdown span {
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 20px;
+    }
+
+    .loading-bar {
+      width: 300px;
+      height: 4px;
+      background: var(--bg-tertiary);
+      border-radius: 2px;
+      margin: 0 auto;
+      overflow: hidden;
+    }
+
+    .loading-progress {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), #e08b6a);
+      width: 0%;
+      transition: width 1s linear;
+    }
+
+    /* Working Overlay */
+    .working-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 2000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .working-overlay.show {
+      display: flex;
+    }
+
+    .working-content {
+      text-align: center;
+    }
+
+    .working-spinner {
+      width: 60px;
+      height: 60px;
+      border: 3px solid var(--bg-tertiary);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    }
+
+    .working-text {
+      color: var(--text-primary);
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .working-command {
+      color: var(--accent);
+      font-size: 14px;
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: 20px;
+    }
+
+    .working-timer {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .auto-refresh-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      padding: 4px 8px;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      transition: all 0.2s ease;
+    }
+
+    .auto-refresh-toggle:hover {
+      background: var(--bg-hover);
+    }
+
+    .auto-refresh-toggle input {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--accent);
+    }
+
+    .auto-refresh-toggle input:checked + .toggle-label {
+      color: var(--accent);
+    }
+
+    /* Animations */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .loading {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    /* Split view resize handle */
+    .resize-handle {
+      width: 4px;
+      background: var(--border);
+      cursor: col-resize;
+      transition: background 0.2s ease;
+    }
+
+    .resize-handle:hover {
+      background: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">C</div>
+      <div class="logo-text">Claude <span>Editor</span></div>
+    </div>
+
+    <div class="header-controls">
+      <div class="dropdown-wrapper">
+        <select id="projectSelect" class="dropdown">
+          <option value="">Vælg projekt...</option>
+        </select>
+      </div>
+
+      <button id="startClaudeBtn" class="btn btn-primary" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        START CLAUDE
+      </button>
+
+      <button id="stopClaudeBtn" class="btn btn-danger" style="display: none;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="6" y="6" width="12" height="12"></rect>
+        </svg>
+        STOP
+      </button>
+
+      <div class="netlify-status" id="netlifyStatus" title="Netlify Dev status">
+        <div class="netlify-dot"></div>
+        <span>Netlify</span>
+      </div>
+
+      <div class="service-links">
+        <button id="githubBtn" class="service-btn github-btn" title="Åbn i GitHub" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+        </button>
+        <button id="netlifyBtn2" class="service-btn netlify-btn" title="Åbn i Netlify" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M16.934 8.519a1.044 1.044 0 0 1 .303.23l2.349-1.045-2.192-2.171-.491 2.954zM12.06 6.546a1.305 1.305 0 0 1 .209.574l3.497 1.482a1.044 1.044 0 0 1 .366-.325l.494-2.97-3.341-3.31-1.225 4.549zM10.762 8.051l2.294-3.168-2.789-2.762-4.383 1.623 4.878 4.307zM11.68 9.095a1.322 1.322 0 0 1-.048.545l2.913 2.96a1.084 1.084 0 0 1 .451-.091c.088 0 .173.012.256.034l1.542-3.597a1.044 1.044 0 0 1-.332-.377l-3.535-1.497a1.305 1.305 0 0 1-.247.023zM8.57 7.073l4.315-1.603L9.32 1.935 8.57 7.073zM10.77 11.519a1.322 1.322 0 0 1-.193-.621l-4.608-1.044.117 3.807 4.684-2.142zM14.727 14.527l-2.667-2.709a1.322 1.322 0 0 1-.569.105l-.349 3.855a1.084 1.084 0 0 1 .59.458l2.995-.709zM10.396 10.198a1.322 1.322 0 0 1-.085-.146L5.96 12.143l.696 2.243 3.74-4.188zM12.076 15.167l.346-3.818a1.322 1.322 0 0 1-.39-.064l-3.746 4.194a1.084 1.084 0 0 1 .124.449l3.666-.761zM6.906 15.175l4.564-1.834a1.084 1.084 0 0 1-.038-.264c0-.071.007-.14.02-.208l-3.704-2.368-.842 4.674zM11.372 18.682l-3.562.742.197 2.43 3.365-3.172zM7.115 15.93l-.42 2.334 3.081 3.053.125-.018-2.786-5.369zM11.555 15.82a1.084 1.084 0 0 1-.138-.304l-3.647.759 2.776 5.346 1.009-5.801zM14.294 15.284l-2.968.704a1.084 1.084 0 0 1-.096.382l2.39 3.888 .674-4.974zM18.639 9.983l-2.384 1.062a1.044 1.044 0 0 1 .009.132c0 .093-.012.183-.035.269l3.146 1.382.264-2.845zM17.816 15.398l.208-2.249-3.088-1.358a1.044 1.044 0 0 1-.322.296l-.651 4.805 3.853-1.494zM15.048 9.625l-1.5 3.496a1.084 1.084 0 0 1 .258.262l3.153-1.38-1.911-2.378zM16.488 11.938l1.837 2.287.27-2.919-2.107.632zM19.523 12.652l.194-2.09-2.148.655 1.954 1.435z"/>
+          </svg>
+        </button>
+        <button id="supabaseBtn" class="service-btn supabase-btn" title="Åbn i Supabase" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M11.9 1.036c-.015-.986-1.26-1.41-1.874-.637L.764 12.05C-.33 13.427.65 15.455 2.409 15.455h9.579l.113 7.51c.014.985 1.259 1.408 1.873.636l9.262-11.653c1.093-1.375.113-3.403-1.645-3.403h-9.642l-.06-7.509z"/>
+          </svg>
+        </button>
+        <div class="credentials-wrapper">
+          <button id="credentialsBtn" class="service-btn credentials-btn" title="Login credentials">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </button>
+          <div id="credentialsDropdown" class="credentials-dropdown">
+            <div class="credentials-header">
+              <span>Login Credentials</span>
+              <button id="closeCredentials" class="close-btn">&times;</button>
+            </div>
+            <div class="credentials-form">
+              <div class="form-group">
+                <label>Email / Brugernavn</label>
+                <input type="text" id="credEmail" placeholder="email@example.com">
+              </div>
+              <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="credPassword" placeholder="••••••••">
+              </div>
+              <div class="credentials-actions">
+                <button id="saveCredentials" class="btn-small btn-primary">Gem</button>
+                <button id="autoFillCredentials" class="btn-small btn-secondary">Auto-udfyld</button>
+              </div>
+            </div>
+            <div class="credentials-info">
+              <small>Credentials gemmes lokalt per projekt</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="left-panel">
+      <div class="panel-header">
+        <div class="panel-tabs">
+          <button class="panel-tab active">Claude Terminal</button>
+        </div>
+        <div class="panel-status">
+          <div id="claudeStatus" class="status-dot"></div>
+          <span id="claudeStatusText" class="status-text">Ikke startet</span>
+        </div>
+      </div>
+
+      <div class="tasks-container">
+        <div class="tasks-header">
+          <span class="tasks-title">Opgaver</span>
+          <button id="newTaskBtn" class="new-task-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Ny opgave
+          </button>
+        </div>
+        <div id="tasksList" class="tasks-list">
+          <div class="welcome-message">
+            <h3>Velkommen til Claude Editor</h3>
+            <p>Vælg et projekt og klik "START CLAUDE" for at begynde.<br>Klik "+ Ny opgave" for at starte en opgave - alle kommandoer grupperes under den aktive opgave.</p>
+          </div>
+        </div>
+
+        <div class="command-input-wrapper">
+          <div id="inputContainer" class="input-container">
+            <div class="input-main">
+              <div id="attachedFiles" class="attached-files"></div>
+              <textarea
+                id="commandInput"
+                class="command-input"
+                placeholder="Skriv din kommando til Claude... (drop filer her)"
+                rows="1"
+                disabled
+              ></textarea>
+              <div class="drop-hint">Slip filer her for at vedhæfte</div>
+            </div>
+            <div class="input-actions">
+              <input type="file" id="fileInput" multiple hidden accept="image/*,.pdf,.txt,.js,.ts,.jsx,.tsx,.json,.md,.css,.html">
+              <button id="uploadBtn" class="upload-btn" title="Upload filer">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                </svg>
+              </button>
+              <button id="sendBtn" class="btn btn-primary send-btn" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="resizeHandle" class="resize-handle"></div>
+
+    <div class="right-panel" id="rightPanel">
+      <div class="preview-header">
+        <div class="preview-tabs">
+          <button class="preview-tab active" data-preview="vite" title="Direkte Vite/Dev server">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            Vite
+          </button>
+          <button class="preview-tab" data-preview="netlify" title="Netlify Dev (med Functions)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M16.934 8.519l2.349-1.045-2.192-2.171-.491 2.954zM12.06 6.546l3.497 1.482.494-2.97-3.341-3.31-1.225 4.549z" opacity="0.7"/>
+            </svg>
+            Netlify
+          </button>
+          <button id="openInNewWindow" class="open-external-btn" title="Åbn i nyt vindue">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+          </button>
+        </div>
+
+        <div class="device-toggles">
+          <button class="device-btn" data-device="mobile" title="Mobile (375px)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+              <line x1="12" y1="18" x2="12.01" y2="18"></line>
+            </svg>
+          </button>
+          <button class="device-btn" data-device="tablet" title="Tablet (768px)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+              <line x1="12" y1="18" x2="12.01" y2="18"></line>
+            </svg>
+          </button>
+          <button class="device-btn active" data-device="desktop" title="Desktop (100%)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+          </button>
+        </div>
+
+        <div class="orientation-toggles">
+          <button class="orientation-btn active" data-orientation="portrait" title="Portrait">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="6" y="2" width="12" height="20" rx="2"></rect>
+            </svg>
+          </button>
+          <button class="orientation-btn" data-orientation="landscape" title="Landscape">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            </svg>
+          </button>
+        </div>
+
+        <div class="preview-url">
+          <input type="text" id="urlBar" class="url-bar" value="Ingen preview" readonly>
+          <button id="refreshBtn" class="refresh-btn" title="Genindlæs">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+            </svg>
+          </button>
+        </div>
+
+        <div class="panel-status">
+          <div id="netlifyPreviewDot" class="status-dot"></div>
+          <span id="netlifyPreviewText" class="status-text">Offline</span>
+        </div>
+
+        <label class="auto-refresh-toggle" title="Auto-refresh efter hver opgave">
+          <input type="checkbox" id="autoRefreshToggle" checked>
+          <span class="toggle-label">Auto</span>
+        </label>
+      </div>
+
+      <div class="preview-content">
+        <div id="previewPlaceholder" class="preview-placeholder">
+          <div class="preview-placeholder-icon">🌐</div>
+          <p class="preview-placeholder-text">
+            Vælg et projekt for at starte preview
+          </p>
+        </div>
+        <div id="previewFrameContainer" class="preview-frame-container fullsize" style="display: none;">
+          <iframe id="previewFrame" class="preview-iframe"></iframe>
+        </div>
+        <div id="deviceLabel" class="device-label" style="display: none;">Desktop</div>
+      </div>
+
+      <div id="netlifyStatusBar" class="netlify-status-bar">
+        <div class="netlify-status-indicator">
+          <div id="netlifyDot" class="status-dot-small"></div>
+          <span id="netlifyMessage">Netlify Dev ikke startet</span>
+        </div>
+        <span id="netlifyPort" class="netlify-port"></span>
+      </div>
+    </div>
+  </main>
+
+  <!-- Loading Overlay -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-content">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">
+        <span id="loadingProject">Projekt</span> loader...
+      </div>
+      <div class="loading-status" style="margin: 16px 0; font-size: 14px;">
+        <div id="viteStatus" style="margin-bottom: 8px; color: var(--text-muted);">⏳ Venter på Vite...</div>
+        <div id="netlifyStatus2" style="color: var(--text-muted);">⏳ Venter på Netlify...</div>
+      </div>
+      <div class="loading-countdown">
+        Klar om <span id="countdownNumber">25</span> sekunder
+      </div>
+      <div class="loading-bar">
+        <div id="loadingProgress" class="loading-progress"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Working Overlay -->
+  <div id="workingOverlay" class="working-overlay">
+    <div class="working-content">
+      <div class="working-spinner"></div>
+      <div class="working-text">Claude arbejder...</div>
+      <div id="workingCommand" class="working-command"></div>
+      <div class="working-timer"><span id="workingSeconds">0</span> sekunder</div>
+    </div>
+  </div>
+
+  <script>
+    // Elements
+    const projectSelect = document.getElementById('projectSelect');
+    const startClaudeBtn = document.getElementById('startClaudeBtn');
+    const stopClaudeBtn = document.getElementById('stopClaudeBtn');
+    const netlifyStatusEl = document.getElementById('netlifyStatus');
+    const terminal = document.getElementById('terminal');
+    const commandInput = document.getElementById('commandInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const previewFrame = document.getElementById('previewFrame');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const urlBar = document.getElementById('urlBar');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const netlifyDot = document.getElementById('netlifyDot');
+    const netlifyMessage = document.getElementById('netlifyMessage');
+    const netlifyPortEl = document.getElementById('netlifyPort');
+    const claudeStatus = document.getElementById('claudeStatus');
+    const claudeStatusText = document.getElementById('claudeStatusText');
+    const netlifyPreviewDot = document.getElementById('netlifyPreviewDot');
+    const netlifyPreviewText = document.getElementById('netlifyPreviewText');
+    const inputContainer = document.getElementById('inputContainer');
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const credentialsBtn = document.getElementById('credentialsBtn');
+    const credentialsDropdown = document.getElementById('credentialsDropdown');
+    const closeCredentials = document.getElementById('closeCredentials');
+    const credEmail = document.getElementById('credEmail');
+    const credPassword = document.getElementById('credPassword');
+    const saveCredentialsBtn = document.getElementById('saveCredentials');
+    const autoFillBtn = document.getElementById('autoFillCredentials');
+    const attachedFilesContainer = document.getElementById('attachedFiles');
+    const resizeHandle = document.getElementById('resizeHandle');
+    const rightPanel = document.getElementById('rightPanel');
+    const leftPanel = document.querySelector('.left-panel');
+    const previewFrameContainer = document.getElementById('previewFrameContainer');
+    const deviceLabel = document.getElementById('deviceLabel');
+    const tasksList = document.getElementById('tasksList');
+    const newTaskBtn = document.getElementById('newTaskBtn');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingProject = document.getElementById('loadingProject');
+    const countdownNumber = document.getElementById('countdownNumber');
+    const loadingProgress = document.getElementById('loadingProgress');
+    const viteStatusEl = document.getElementById('viteStatus');
+    const netlifyStatus2El = document.getElementById('netlifyStatus2');
+    const workingOverlay = document.getElementById('workingOverlay');
+    const workingCommand = document.getElementById('workingCommand');
+    const workingSeconds = document.getElementById('workingSeconds');
+
+    let ws;
+    let selectedProject = '';
+    let claudeRunning = false;
+    let netlifyRunning = false;
+    let attachedFiles = [];
+    let currentDevice = 'desktop';
+    let currentOrientation = 'portrait';
+    let tasks = [];
+    let currentTaskId = null;
+    let activeTaskId = null; // Task that commands are added to
+    let workingTimerInterval = null;
+    let workingStartTime = null;
+    let autoRefreshEnabled = true;
+    const autoRefreshToggle = document.getElementById('autoRefreshToggle');
+    let currentPreviewMode = 'vite';
+    let vitePort = null;
+    let netlifyPort = null;
+
+    // Projects that need Netlify Dev for functions
+    const needsNetlifyDev = ['TASTE', 'PLAY'];
+
+    // Service buttons
+    const githubBtn = document.getElementById('githubBtn');
+    const netlifyBtn2 = document.getElementById('netlifyBtn2');
+    const supabaseBtn = document.getElementById('supabaseBtn');
+
+    // Project mappings to services
+    const projectServices = {
+      'OCC': {
+        github: 'https://github.com/Teambattle1/OCC',
+        netlify: 'https://app.netlify.com/projects/crewcenter/overview',
+        supabase: 'https://supabase.com/dashboard/project/ilbjytyukicbssqftmma'
+      },
+      'TASTE': {
+        github: 'https://github.com/Teambattle1/Taste',
+        netlify: 'https://app.netlify.com/projects/teamtaste/overview',
+        supabase: 'https://supabase.com/dashboard/project/wqvqzyighqoaynagutkx'
+      },
+      'TRACK': {
+        github: 'https://github.com/Teambattle1/Track',
+        netlify: 'https://app.netlify.com/projects/teamaction/overview',
+        supabase: 'https://supabase.com/dashboard/project/yktaxljydisfjyqhbnja'
+      },
+      'AGMUSIK': {
+        github: 'https://github.com/Teambattle1',
+        netlify: 'https://app.netlify.com/teams/teambattle1/projects',
+        supabase: 'https://supabase.com/dashboard/projects'
+      },
+      'HKSTARS': {
+        github: 'https://github.com/Teambattle1',
+        netlify: 'https://app.netlify.com/teams/teambattle1/projects',
+        supabase: 'https://supabase.com/dashboard/projects'
+      },
+      'PLAY': {
+        github: 'https://github.com/Teambattle1/Play',
+        netlify: 'https://app.netlify.com/projects/teamplayzone/overview',
+        supabase: 'https://supabase.com/dashboard/project/infnlcqdwycjfssymeic'
+      },
+      'CrewControlCenter': {
+        github: 'https://github.com/Teambattle1/CrewControlCenter',
+        netlify: 'https://app.netlify.com/teams/teambattle1/projects',
+        supabase: 'https://supabase.com/dashboard/projects'
+      }
+    };
+
+    // Device sizes
+    const deviceSizes = {
+      mobile: { width: 375, height: 667, label: 'Mobile (375×667)' },
+      tablet: { width: 768, height: 1024, label: 'Tablet (768×1024)' },
+      desktop: { width: '100%', height: '100%', label: 'Desktop' }
+    };
+
+    // Credentials storage
+    function getCredentials(project) {
+      const stored = localStorage.getItem('claude-editor-credentials');
+      if (stored) {
+        const creds = JSON.parse(stored);
+        return creds[project] || null;
+      }
+      return null;
+    }
+
+    function saveCredentials(project, email, password) {
+      const stored = localStorage.getItem('claude-editor-credentials') || '{}';
+      const creds = JSON.parse(stored);
+      creds[project] = { email, password };
+      localStorage.setItem('claude-editor-credentials', JSON.stringify(creds));
+      updateCredentialsBtn(project);
+    }
+
+    function loadCredentialsForProject(project) {
+      const creds = getCredentials(project);
+      if (creds) {
+        credEmail.value = creds.email || '';
+        credPassword.value = creds.password || '';
+      } else {
+        credEmail.value = '';
+        credPassword.value = '';
+      }
+      updateCredentialsBtn(project);
+    }
+
+    function updateCredentialsBtn(project) {
+      const creds = getCredentials(project);
+      if (creds && creds.email) {
+        credentialsBtn.classList.add('has-credentials');
+        credentialsBtn.title = `Login: ${creds.email}`;
+      } else {
+        credentialsBtn.classList.remove('has-credentials');
+        credentialsBtn.title = 'Login credentials';
+      }
+    }
+
+    function tryAutoFill() {
+      const creds = getCredentials(selectedProject);
+      if (!creds) return;
+
+      // Try to auto-fill via postMessage (apps need to support this)
+      try {
+        previewFrame.contentWindow.postMessage({
+          type: 'claude-editor-autofill',
+          email: creds.email,
+          password: creds.password
+        }, '*');
+      } catch (e) {
+        console.log('Could not send autofill message:', e);
+      }
+
+      // Also try direct DOM manipulation if same origin
+      try {
+        const doc = previewFrame.contentDocument || previewFrame.contentWindow.document;
+        const emailInput = doc.querySelector('input[type="email"], input[name="email"], input[name="username"]');
+        const passwordInput = doc.querySelector('input[type="password"]');
+
+        if (emailInput) {
+          emailInput.value = creds.email;
+          emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if (passwordInput) {
+          passwordInput.value = creds.password;
+          passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        // Try to submit the form
+        const form = doc.querySelector('form');
+        if (form && emailInput && passwordInput) {
+          // Give framework time to process inputs
+          setTimeout(() => {
+            const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+            if (submitBtn) submitBtn.click();
+          }, 100);
+        }
+      } catch (e) {
+        // Cross-origin - can't access directly
+        console.log('Cannot access iframe (cross-origin)');
+      }
+    }
+
+    // Credentials UI handlers
+    credentialsBtn.addEventListener('click', () => {
+      credentialsDropdown.classList.toggle('show');
+    });
+
+    closeCredentials.addEventListener('click', () => {
+      credentialsDropdown.classList.remove('show');
+    });
+
+    saveCredentialsBtn.addEventListener('click', () => {
+      if (selectedProject) {
+        saveCredentials(selectedProject, credEmail.value, credPassword.value);
+        credentialsDropdown.classList.remove('show');
+      }
+    });
+
+    autoFillBtn.addEventListener('click', () => {
+      tryAutoFill();
+      credentialsDropdown.classList.remove('show');
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!credentialsDropdown.contains(e.target) && e.target !== credentialsBtn && !credentialsBtn.contains(e.target)) {
+        credentialsDropdown.classList.remove('show');
+      }
+    });
+
+    // Auto-fill when preview loads
+    previewFrame.addEventListener('load', () => {
+      if (selectedProject && getCredentials(selectedProject)) {
+        // Small delay to let the page initialize
+        setTimeout(tryAutoFill, 500);
+      }
+    });
+
+    // Initialize WebSocket
+    function initWebSocket() {
+      ws = new WebSocket(`ws://${window.location.host}`);
+
+      ws.onopen = () => {
+        console.log('Connected to server');
+        // Re-send current project state on reconnect
+        if (selectedProject) {
+          ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
+        }
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleMessage(data);
+      };
+
+      ws.onclose = () => {
+        console.log('Disconnected from server');
+        setTimeout(initWebSocket, 2000);
+      };
+    }
+
+    // Handle incoming messages
+    function handleMessage(data) {
+      switch (data.type) {
+        case 'claude-output':
+          if (currentTaskId) {
+            appendToTask(currentTaskId, data.data);
+          }
+          // Check if task is complete
+          if (data.data.includes('Kommando færdig')) {
+            hideWorkingOverlay();
+            if (currentTaskId) {
+              completeTask(currentTaskId);
+            }
+          }
+          // Also stop timer on error
+          if (data.data.includes('⚠️') || data.data.includes('❌')) {
+            if (currentTaskId) {
+              stopTaskTimer(currentTaskId);
+            }
+          }
+          break;
+        case 'claude-started':
+          setClaudeRunning(true);
+          break;
+        case 'claude-stopped':
+          hideWorkingOverlay();
+          setClaudeRunning(false);
+          break;
+        case 'netlify-output':
+          updateNetlifyStatus(data.data);
+          break;
+        case 'netlify-started':
+          setNetlifyRunning(true);
+          break;
+        case 'netlify-stopped':
+          setNetlifyRunning(false);
+          break;
+        case 'preview-url':
+          // Extract port from URL and store it
+          const urlPort = data.url.match(/localhost:(\d+)/);
+          if (urlPort) {
+            const port = urlPort[1];
+            if (port === '8888') {
+              netlifyPort = port;
+              signalNetlifyReady();
+            } else {
+              vitePort = port;
+              signalViteReady();
+            }
+          }
+          showPreview(data.url);
+          break;
+      }
+    }
+
+    // Task management
+    function createTask(name) {
+      const task = {
+        id: Date.now(),
+        number: tasks.length + 1,
+        name: name,
+        commands: [], // Array of {prompt, output} objects
+        status: 'running',
+        timestamp: new Date().toLocaleTimeString()
+      };
+      tasks.push(task);
+      currentTaskId = task.id;
+      activeTaskId = task.id;
+      renderTasks();
+      return task;
+    }
+
+    function addCommandToTask(taskId, prompt) {
+      const task = tasks.find(t => t.id === taskId);
+      if (task) {
+        task.commands.push({ prompt: prompt, output: '' });
+        task.status = 'running';
+        renderTasks();
+      }
+    }
+
+    function appendToTask(taskId, text) {
+      const task = tasks.find(t => t.id === taskId);
+      if (task && task.commands.length > 0) {
+        const lastCommand = task.commands[task.commands.length - 1];
+        lastCommand.output += text;
+        updateTaskOutput(taskId);
+      }
+    }
+
+    function completeTask(taskId) {
+      const task = tasks.find(t => t.id === taskId);
+      if (task) {
+        task.status = 'completed';
+        stopTaskTimer(taskId); // Stop the timer
+        renderTasks();
+
+        // Auto-refresh preview if enabled and preview has a URL
+        if (autoRefreshEnabled && previewFrame.src) {
+          console.log('Auto-refreshing preview...');
+          setTimeout(() => {
+            previewFrame.src = previewFrame.src;
+          }, 1000);
+        }
+      }
+    }
+
+    // Auto-refresh toggle
+    autoRefreshToggle.addEventListener('change', (e) => {
+      autoRefreshEnabled = e.target.checked;
+    });
+
+    // Preview tabs
+    document.querySelectorAll('.preview-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.preview-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentPreviewMode = tab.dataset.preview;
+        updatePreviewUrl();
+      });
+    });
+
+    // Open preview in new window
+    document.getElementById('openInNewWindow').addEventListener('click', () => {
+      const port = currentPreviewMode === 'netlify' ? (netlifyPort || '8888') : (vitePort || '5173');
+      window.open(`http://localhost:${port}`, '_blank');
+    });
+
+    function updatePreviewUrl() {
+      let port;
+      if (currentPreviewMode === 'netlify') {
+        port = netlifyPort || '8888';
+      } else {
+        port = vitePort || '5173';
+      }
+
+      const url = `http://localhost:${port}`;
+
+      // Only update if URL changed to avoid unnecessary reloads
+      if (previewFrame.src !== url) {
+        previewFrame.src = url;
+      }
+      urlBar.value = url;
+      previewPlaceholder.style.display = 'none';
+      previewFrameContainer.style.display = 'block';
+      deviceLabel.style.display = 'block';
+
+      // Update port display in bottom status bar
+      if (netlifyPortEl) {
+        netlifyPortEl.textContent = `localhost:${port}`;
+      }
+
+      console.log('Preview mode:', currentPreviewMode, 'Port:', port, 'vitePort:', vitePort, 'netlifyPort:', netlifyPort);
+    }
+
+    function renderTasks() {
+      if (tasks.length === 0) {
+        if (claudeRunning) {
+          tasksList.innerHTML = `
+            <div class="welcome-message">
+              <h3>Klar til at arbejde</h3>
+              <p>Klik "+ Ny opgave" for at starte en opgave, eller skriv en kommando nedenfor.</p>
+            </div>
+          `;
+        } else {
+          tasksList.innerHTML = `
+            <div class="welcome-message">
+              <h3>Velkommen til Claude Editor</h3>
+              <p>Vælg et projekt og klik "START CLAUDE" for at begynde.<br>Klik "+ Ny opgave" for at starte en opgave - alle kommandoer grupperes under den aktive opgave.</p>
+            </div>
+          `;
+        }
+        return;
+      }
+
+      tasksList.innerHTML = tasks.map(task => `
+        <div class="task-item ${task.status === 'running' ? 'active' : ''} ${task.id === activeTaskId ? 'expanded' : ''} ${task.status}" data-id="${task.id}">
+          <div class="task-header" onclick="toggleTask(${task.id})">
+            <svg class="task-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+            <span class="task-number">${task.number}</span>
+            <span class="task-prompt">${escapeHtml(task.name)}</span>
+            <span class="task-status ${task.status}">
+              ${task.status === 'running'
+                ? `<span id="timer-${task.id}">${task.timerSeconds || 0}s</span> KØRER${task.id === activeTaskId ? ' (AKTIV)' : ''} <button class="task-stop-btn" onclick="event.stopPropagation(); stopTask(${task.id})">⬛ STOP</button>`
+                : `<span class="task-complete-badge">✓ FÆRDIG</span>`}
+            </span>
+          </div>
+          <div class="task-content">
+            <div class="task-output" id="output-${task.id}">${task.commands.map(cmd =>
+              `<div class="command-block"><div class="command-prompt">💬 ${escapeHtml(cmd.prompt)}</div><div class="command-output">${escapeHtml(cmd.output)}</div></div>`
+            ).join('')}</div>
+          </div>
+        </div>
+      `).join('');
+
+      // Scroll to active task
+      const activeTask = tasksList.querySelector('.task-item.active');
+      if (activeTask) {
+        activeTask.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    function updateTaskOutput(taskId) {
+      const outputEl = document.getElementById(`output-${taskId}`);
+      const task = tasks.find(t => t.id === taskId);
+      if (outputEl && task) {
+        outputEl.innerHTML = task.commands.map(cmd =>
+          `<div class="command-block"><div class="command-prompt">💬 ${escapeHtml(cmd.prompt)}</div><div class="command-output">${escapeHtml(cmd.output)}</div></div>`
+        ).join('');
+        outputEl.scrollTop = outputEl.scrollHeight;
+      }
+    }
+
+    window.toggleTask = function(taskId) {
+      const taskEl = tasksList.querySelector(`[data-id="${taskId}"]`);
+      if (taskEl) {
+        taskEl.classList.toggle('expanded');
+      }
+    };
+
+    window.stopTask = function(taskId) {
+      // Send stop command to server
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop-current-command' }));
+      }
+      // Mark task as completed
+      const task = tasks.find(t => t.id === taskId);
+      if (task) {
+        task.status = 'completed';
+        stopTaskTimer(taskId);
+        renderTasks();
+      }
+    };
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function collapseAllTasks() {
+      tasksList.querySelectorAll('.task-item').forEach(el => {
+        el.classList.remove('expanded');
+      });
+    }
+
+    // Update Netlify status from output
+    function updateNetlifyStatus(text) {
+      // Check for ready message
+      if (text.includes('ready') || text.includes('Server now ready') || text.includes('Local dev server ready')) {
+        netlifyDot.classList.add('running');
+        netlifyDot.classList.remove('error');
+        netlifyMessage.textContent = 'Netlify Dev kører';
+      }
+      // Check for port - Netlify dev typically runs on 8888
+      const portMatch = text.match(/localhost:(\d+)/);
+      if (portMatch) {
+        const port = portMatch[1];
+        netlifyPortEl.textContent = `localhost:${port}`;
+
+        // Store port and auto-show preview
+        const portNum = parseInt(port);
+        if (port === '8888' || text.includes('Server now ready')) {
+          netlifyPort = port;
+          signalNetlifyReady();
+          showPreview(`http://localhost:${port}`);
+        } else if (portNum >= 5173 && portNum <= 5200 || port === '3000' || port === '3001' || port === '8080' || port === '8081') {
+          // Vite typically uses ports 5173-5200, also 3000/3001, 8080/8081
+          vitePort = port;
+          signalViteReady();
+          console.log('Detected Vite port:', port);
+        }
+      }
+      // Check for "Server now ready on" pattern
+      const readyMatch = text.match(/Server now ready on (http:\/\/localhost:\d+)/);
+      if (readyMatch) {
+        showPreview(readyMatch[1]);
+      }
+      // Check for errors
+      if (text.includes('Error') || text.includes('EADDRINUSE')) {
+        netlifyDot.classList.add('error');
+        netlifyMessage.textContent = 'Fejl - tjek logs';
+      }
+    }
+
+    // Show preview
+    function showPreview(url) {
+      previewPlaceholder.style.display = 'none';
+      previewFrameContainer.style.display = 'block';
+      previewFrame.src = url;
+      urlBar.value = url;
+      deviceLabel.style.display = 'block';
+      updateDeviceSize();
+    }
+
+    // Update device size
+    function updateDeviceSize() {
+      const size = deviceSizes[currentDevice];
+
+      if (currentDevice === 'desktop') {
+        previewFrameContainer.classList.add('fullsize');
+        previewFrameContainer.style.width = '';
+        previewFrameContainer.style.height = '';
+        deviceLabel.textContent = size.label;
+      } else {
+        previewFrameContainer.classList.remove('fullsize');
+        let width = size.width;
+        let height = size.height;
+
+        if (currentOrientation === 'landscape') {
+          [width, height] = [height, width];
+        }
+
+        previewFrameContainer.style.width = width + 'px';
+        previewFrameContainer.style.height = height + 'px';
+        deviceLabel.textContent = `${currentDevice.charAt(0).toUpperCase() + currentDevice.slice(1)} (${width}×${height})`;
+      }
+    }
+
+    // Set Claude running state
+    function setClaudeRunning(running) {
+      claudeRunning = running;
+      startClaudeBtn.style.display = running ? 'none' : 'flex';
+      stopClaudeBtn.style.display = running ? 'flex' : 'none';
+      commandInput.disabled = !running;
+      sendBtn.disabled = !running;
+      claudeStatus.classList.toggle('active', running);
+      claudeStatusText.textContent = running ? 'Kører' : 'Ikke startet';
+
+      // Update welcome message based on running state
+      renderTasks();
+
+      if (running) {
+        commandInput.focus();
+      }
+    }
+
+    // Set Netlify running state
+    function setNetlifyRunning(running) {
+      netlifyRunning = running;
+      netlifyStatusEl.classList.toggle('running', running);
+
+      // Update preview status
+      if (netlifyPreviewDot) {
+        netlifyPreviewDot.classList.toggle('running', running);
+      }
+      if (netlifyPreviewText) {
+        netlifyPreviewText.textContent = running ? 'Kører' : 'Offline';
+      }
+
+      if (running) {
+        if (netlifyMessage) netlifyMessage.textContent = 'Netlify Dev kører';
+        if (netlifyDot) netlifyDot.classList.add('running');
+        if (netlifyDot) netlifyDot.classList.remove('error');
+      } else {
+        previewPlaceholder.style.display = 'flex';
+        previewFrameContainer.style.display = 'none';
+        urlBar.value = 'Ingen preview';
+        if (netlifyMessage) netlifyMessage.textContent = 'Netlify Dev ikke startet';
+        if (netlifyDot) netlifyDot.classList.remove('running', 'error');
+        if (netlifyPort) netlifyPortEl.textContent = '';
+      }
+    }
+
+    // Load projects
+    async function loadProjects() {
+      try {
+        const response = await fetch('/api/projects');
+        const projects = await response.json();
+
+        projects.forEach(project => {
+          const option = document.createElement('option');
+          option.value = project;
+          option.textContent = project;
+          projectSelect.appendChild(option);
+        });
+      } catch (error) {
+        console.error('Failed to load projects:', error);
+      }
+    }
+
+    // Countdown function for project loading
+    let loadingCountdownInterval = null;
+    let loadingCallback = null;
+    let viteReady = false;
+    let netlifyReady = false;
+
+    function showProjectLoading(project, callback) {
+      loadingProject.textContent = project;
+      loadingOverlay.classList.add('show');
+      loadingProgress.style.width = '0%';
+      loadingCallback = callback;
+      viteReady = false;
+      netlifyReady = false;
+
+      // Reset status indicators
+      if (viteStatusEl) {
+        viteStatusEl.textContent = '⏳ Venter på Vite...';
+        viteStatusEl.style.color = 'var(--text-muted)';
+      }
+      if (netlifyStatus2El) {
+        netlifyStatus2El.textContent = '⏳ Venter på Netlify...';
+        netlifyStatus2El.style.color = 'var(--text-muted)';
+      }
+
+      let seconds = 25;
+      countdownNumber.textContent = seconds;
+
+      // Clear any existing interval
+      if (loadingCountdownInterval) {
+        clearInterval(loadingCountdownInterval);
+      }
+
+      loadingCountdownInterval = setInterval(() => {
+        seconds--;
+        countdownNumber.textContent = seconds;
+        loadingProgress.style.width = ((25 - seconds) / 25 * 100) + '%';
+
+        // Check if both services are ready
+        if (viteReady && netlifyReady) {
+          finishLoading();
+          return;
+        }
+
+        if (seconds <= 0) {
+          finishLoading();
+        }
+      }, 1000);
+    }
+
+    function finishLoading() {
+      if (loadingCountdownInterval) {
+        clearInterval(loadingCountdownInterval);
+        loadingCountdownInterval = null;
+      }
+      loadingOverlay.classList.remove('show');
+
+      // Focus back on Claude Editor window and command input
+      window.focus();
+      setTimeout(() => {
+        commandInput.focus();
+      }, 100);
+
+      // Always try to show preview if we have any port
+      if (vitePort || netlifyPort) {
+        updatePreviewUrl();
+      }
+
+      if (loadingCallback) {
+        loadingCallback();
+        loadingCallback = null;
+      }
+    }
+
+    function signalViteReady() {
+      viteReady = true;
+      if (viteStatusEl) {
+        viteStatusEl.textContent = '✅ Vite klar!';
+        viteStatusEl.style.color = 'var(--success)';
+      }
+      if (viteReady && netlifyReady && loadingCountdownInterval) {
+        finishLoading();
+      }
+    }
+
+    function signalNetlifyReady() {
+      netlifyReady = true;
+      if (netlifyStatus2El) {
+        netlifyStatus2El.textContent = '✅ Netlify klar!';
+        netlifyStatus2El.style.color = 'var(--success)';
+      }
+      if (viteReady && netlifyReady && loadingCountdownInterval) {
+        finishLoading();
+      }
+    }
+
+    // Task timer functions (replaces blocking overlay)
+    const taskTimers = {}; // Map of taskId -> {interval, startTime}
+
+    function startTaskTimer(taskId) {
+      // Clear any existing timer for this task
+      stopTaskTimer(taskId);
+
+      const task = tasks.find(t => t.id === taskId);
+      if (task) {
+        task.timerStartTime = Date.now();
+        task.timerSeconds = 0;
+
+        taskTimers[taskId] = setInterval(() => {
+          const task = tasks.find(t => t.id === taskId);
+          if (task) {
+            task.timerSeconds = Math.floor((Date.now() - task.timerStartTime) / 1000);
+            updateTaskTimerDisplay(taskId);
+          }
+        }, 1000);
+
+        renderTasks();
+      }
+    }
+
+    function stopTaskTimer(taskId) {
+      if (taskTimers[taskId]) {
+        clearInterval(taskTimers[taskId]);
+        delete taskTimers[taskId];
+      }
+    }
+
+    function updateTaskTimerDisplay(taskId) {
+      const timerEl = document.getElementById(`timer-${taskId}`);
+      const task = tasks.find(t => t.id === taskId);
+      if (timerEl && task) {
+        timerEl.textContent = `${task.timerSeconds}s`;
+      }
+    }
+
+    // Legacy overlay functions (kept for compatibility but not used)
+    function showWorkingOverlay(command) {
+      // No longer blocks - timer is shown in task list
+    }
+
+    function hideWorkingOverlay() {
+      // No longer needed
+    }
+
+    // Event listeners
+    projectSelect.addEventListener('change', (e) => {
+      selectedProject = e.target.value;
+      startClaudeBtn.disabled = !selectedProject;
+
+      // Load credentials for this project
+      if (selectedProject) {
+        loadCredentialsForProject(selectedProject);
+      }
+
+      // Enable/disable service buttons
+      const hasServices = selectedProject && projectServices[selectedProject];
+      githubBtn.disabled = !hasServices;
+      netlifyBtn2.disabled = !hasServices;
+      supabaseBtn.disabled = !hasServices;
+
+      // Show loading countdown and start services
+      if (selectedProject) {
+        // Reset ports and tasks when switching projects
+        vitePort = null;
+        netlifyPort = null;
+        tasks = [];
+        activeTaskId = null;
+        currentTaskId = null;
+        renderTasks();
+
+        showProjectLoading(selectedProject, () => {
+          // Countdown finished - preview should be ready
+          updatePreviewUrl();
+        });
+
+        // Start services immediately in background
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          console.log('Starting Claude and Netlify for:', selectedProject);
+          ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
+
+          // Always stop netlify first when switching
+          ws.send(JSON.stringify({ type: 'stop-netlify' }));
+
+          setTimeout(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'start-netlify', project: selectedProject }));
+            }
+          }, 1000); // Longer delay to ensure cleanup
+        } else {
+          const checkWs = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              clearInterval(checkWs);
+              ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
+              ws.send(JSON.stringify({ type: 'stop-netlify' }));
+              setTimeout(() => {
+                ws.send(JSON.stringify({ type: 'start-netlify', project: selectedProject }));
+              }, 1000);
+            }
+          }, 100);
+        }
+      }
+    });
+
+    // Service button click handlers
+    githubBtn.addEventListener('click', () => {
+      if (selectedProject && projectServices[selectedProject]) {
+        window.open(projectServices[selectedProject].github, '_blank');
+      }
+    });
+
+    netlifyBtn2.addEventListener('click', () => {
+      if (selectedProject && projectServices[selectedProject]) {
+        window.open(projectServices[selectedProject].netlify, '_blank');
+      }
+    });
+
+    supabaseBtn.addEventListener('click', () => {
+      if (selectedProject && projectServices[selectedProject]) {
+        window.open(projectServices[selectedProject].supabase, '_blank');
+      }
+    });
+
+    startClaudeBtn.addEventListener('click', () => {
+      if (selectedProject && ws) {
+        ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
+      }
+    });
+
+    stopClaudeBtn.addEventListener('click', () => {
+      if (ws) {
+        ws.send(JSON.stringify({ type: 'stop-claude' }));
+      }
+    });
+
+    // Click netlify status to stop if running
+    netlifyStatusEl.addEventListener('click', () => {
+      if (netlifyRunning && ws) {
+        ws.send(JSON.stringify({ type: 'stop-netlify' }));
+      }
+    });
+
+    sendBtn.addEventListener('click', () => {
+      sendCommand();
+    });
+
+    commandInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendCommand();
+      }
+      // Shift+Enter allows new line (default behavior)
+    });
+
+    refreshBtn.addEventListener('click', () => {
+      if (previewFrame.src) {
+        previewFrame.src = previewFrame.src;
+      }
+    });
+
+    // File upload handling
+    uploadBtn.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      handleFiles(e.target.files);
+      fileInput.value = '';
+    });
+
+    // Drag and drop
+    inputContainer.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      inputContainer.classList.add('drag-over');
+    });
+
+    inputContainer.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      inputContainer.classList.remove('drag-over');
+    });
+
+    inputContainer.addEventListener('drop', (e) => {
+      e.preventDefault();
+      inputContainer.classList.remove('drag-over');
+      handleFiles(e.dataTransfer.files);
+    });
+
+    function handleFiles(files) {
+      for (const file of files) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const fileData = {
+            name: file.name,
+            type: file.type,
+            data: e.target.result,
+            isImage: file.type.startsWith('image/')
+          };
+          attachedFiles.push(fileData);
+          renderAttachedFiles();
+        };
+
+        if (file.type.startsWith('image/')) {
+          reader.readAsDataURL(file);
+        } else {
+          reader.readAsText(file);
+        }
+      }
+    }
+
+    function renderAttachedFiles() {
+      attachedFilesContainer.innerHTML = '';
+      attachedFiles.forEach((file, index) => {
+        const fileEl = document.createElement('div');
+        fileEl.className = 'attached-file';
+
+        if (file.isImage) {
+          fileEl.innerHTML = `
+            <img src="${file.data}" alt="${file.name}">
+            <span>${file.name}</span>
+            <button class="remove-file" onclick="removeFile(${index})">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          `;
+        } else {
+          fileEl.innerHTML = `
+            <span class="file-icon">📄</span>
+            <span>${file.name}</span>
+            <button class="remove-file" onclick="removeFile(${index})">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          `;
+        }
+
+        attachedFilesContainer.appendChild(fileEl);
+      });
+    }
+
+    window.removeFile = function(index) {
+      attachedFiles.splice(index, 1);
+      renderAttachedFiles();
+    };
+
+    // Auto-resize textarea
+    commandInput.addEventListener('input', () => {
+      commandInput.style.height = 'auto';
+      commandInput.style.height = Math.min(commandInput.scrollHeight, 200) + 'px';
+    });
+
+    function sendCommand() {
+      const command = commandInput.value.trim();
+      console.log('sendCommand called:', { command, wsReady: ws?.readyState === WebSocket.OPEN, claudeRunning, activeTaskId });
+      if ((command || attachedFiles.length > 0) && ws && claudeRunning) {
+        // Check if there's an active task, if not prompt to create one
+        if (!activeTaskId) {
+          const taskName = prompt('Giv opgaven et navn:', command.substring(0, 50) + '...');
+          if (!taskName) return; // User cancelled
+          createTask(taskName);
+        }
+
+        // Add command to the active task
+        addCommandToTask(activeTaskId, command);
+        currentTaskId = activeTaskId;
+
+        // Start timer for this task (no blocking overlay)
+        startTaskTimer(activeTaskId);
+
+        console.log('Sending command to server:', command);
+        ws.send(JSON.stringify({
+          type: 'send-command',
+          command,
+          files: attachedFiles
+        }));
+        console.log('Command sent!');
+        commandInput.value = '';
+        commandInput.style.height = 'auto';
+        attachedFiles = [];
+        renderAttachedFiles();
+      }
+    }
+
+    // New task button - creates a new task
+    newTaskBtn.addEventListener('click', () => {
+      const taskName = prompt('Giv den nye opgave et navn:');
+      if (!taskName) return; // User cancelled
+
+      // Complete previous active task if it exists
+      if (activeTaskId) {
+        completeTask(activeTaskId);
+      }
+
+      collapseAllTasks();
+      createTask(taskName);
+      commandInput.focus();
+    });
+
+    // Device toggle buttons
+    document.querySelectorAll('.device-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.device-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentDevice = btn.dataset.device;
+        updateDeviceSize();
+      });
+    });
+
+    // Orientation toggle buttons
+    document.querySelectorAll('.orientation-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.orientation-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentOrientation = btn.dataset.orientation;
+        updateDeviceSize();
+      });
+    });
+
+    // Resize handle
+    let isResizing = false;
+
+    resizeHandle.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      resizeHandle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+
+      const containerRect = document.querySelector('.main').getBoundingClientRect();
+      const newLeftWidth = e.clientX - containerRect.left;
+      const minWidth = 300;
+      const maxWidth = containerRect.width - 300;
+
+      if (newLeftWidth >= minWidth && newLeftWidth <= maxWidth) {
+        leftPanel.style.flex = 'none';
+        leftPanel.style.width = newLeftWidth + 'px';
+        rightPanel.style.width = (containerRect.width - newLeftWidth - 6) + 'px';
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        resizeHandle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+
+    // Initialize
+    initWebSocket();
+    loadProjects();
+  </script>
+</body>
+</html>
