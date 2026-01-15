@@ -12,6 +12,8 @@ A web-based visual editor for Claude CLI with live preview capabilities.
 
 ## Screenshot
 
+![Claude Editor](screenshot.png)
+
 The editor has a 3-column layout:
 1. **Left**: Project selector and task list with completion badges
 2. **Center**: Command output and multi-line input field
