@@ -427,10 +427,89 @@
       font-size: 11px;
     }
 
+    /* Project Tabs */
+    .project-tabs-bar {
+      display: flex;
+      align-items: center;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border);
+      height: 36px;
+      padding: 0 8px;
+      gap: 4px;
+      overflow-x: auto;
+    }
+
+    .project-tabs-bar::-webkit-scrollbar {
+      height: 4px;
+    }
+
+    .project-tabs-bar::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    .project-tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: transparent;
+      border: none;
+      border-radius: 6px 6px 0 0;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+
+    .project-tab:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .project-tab.active {
+      background: var(--bg-secondary);
+      color: var(--accent);
+      border-bottom: 2px solid var(--accent);
+    }
+
+    .project-tab .tab-port {
+      font-size: 10px;
+      color: var(--text-muted);
+      background: var(--bg-primary);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .project-tab .tab-close {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      opacity: 0.5;
+      transition: all 0.2s;
+    }
+
+    .project-tab .tab-close:hover {
+      opacity: 1;
+      background: var(--error);
+      color: white;
+    }
+
+    .project-tabs-empty {
+      color: var(--text-muted);
+      font-size: 12px;
+      padding: 0 12px;
+    }
+
     /* Main Layout */
     .main {
       display: flex;
-      height: calc(100vh - 60px);
+      height: calc(100vh - 96px); /* Account for header + tabs */
     }
 
     /* Left Panel - Editor/Terminal */
@@ -1498,6 +1577,11 @@
     </div>
   </header>
 
+  <!-- Project Tabs Bar -->
+  <div class="project-tabs-bar" id="projectTabsBar">
+    <span class="project-tabs-empty">Vælg et projekt for at åbne en tab...</span>
+  </div>
+
   <main class="main">
     <div class="left-panel">
       <div class="panel-header">
@@ -1745,6 +1829,126 @@
     let selectedProject = '';
     let claudeRunning = false;
     let netlifyRunning = false;
+
+    // Multi-project tab management
+    const openProjects = new Map(); // projectName -> { terminalOutput, previewUrl, vitePort, netlifyPort, claudeReady, tasks }
+    let activeProjectTab = null;
+
+    function getProjectTabsBar() {
+      return document.getElementById('projectTabsBar');
+    }
+
+    function openProjectTab(projectName) {
+      if (!openProjects.has(projectName)) {
+        openProjects.set(projectName, {
+          terminalOutput: '',
+          previewUrl: null,
+          vitePort: null,
+          netlifyPort: null,
+          claudeReady: false,
+          netlifyRunning: false,
+          tasks: []
+        });
+      }
+      switchToProjectTab(projectName);
+      renderProjectTabs();
+    }
+
+    function closeProjectTab(projectName) {
+      // Stop services for this project
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop-claude', project: projectName }));
+        ws.send(JSON.stringify({ type: 'stop-netlify', project: projectName }));
+      }
+      openProjects.delete(projectName);
+
+      // Switch to another tab if we closed the active one
+      if (activeProjectTab === projectName) {
+        const remaining = Array.from(openProjects.keys());
+        if (remaining.length > 0) {
+          switchToProjectTab(remaining[0]);
+        } else {
+          activeProjectTab = null;
+          selectedProject = '';
+          terminal.innerHTML = '<p class="terminal-line" style="color: var(--text-muted);">Vælg et projekt...</p>';
+          previewPlaceholder.style.display = 'flex';
+          previewFrameContainer.style.display = 'none';
+        }
+      }
+      renderProjectTabs();
+    }
+
+    function switchToProjectTab(projectName) {
+      if (!openProjects.has(projectName)) return;
+
+      activeProjectTab = projectName;
+      selectedProject = projectName;
+
+      const state = openProjects.get(projectName);
+
+      // Restore terminal output
+      terminal.innerHTML = state.terminalOutput || '<p class="terminal-line" style="color: var(--text-muted);">Terminal klar...</p>';
+      terminal.scrollTop = terminal.scrollHeight;
+
+      // Restore preview
+      if (state.vitePort || state.netlifyPort) {
+        const port = state.netlifyPort || state.vitePort;
+        previewFrame.src = `http://localhost:${port}`;
+        urlBar.value = `http://localhost:${port}`;
+        previewPlaceholder.style.display = 'none';
+        previewFrameContainer.style.display = 'block';
+      } else {
+        previewPlaceholder.style.display = 'flex';
+        previewFrameContainer.style.display = 'none';
+        urlBar.value = 'Venter på server...';
+      }
+
+      // Update UI state
+      claudeRunning = state.claudeReady;
+      netlifyRunning = state.netlifyRunning;
+      updateStatusIndicators();
+
+      renderProjectTabs();
+    }
+
+    function renderProjectTabs() {
+      const tabsBar = getProjectTabsBar();
+      if (openProjects.size === 0) {
+        tabsBar.innerHTML = '<span class="project-tabs-empty">Vælg et projekt for at åbne en tab...</span>';
+        return;
+      }
+
+      tabsBar.innerHTML = Array.from(openProjects.entries()).map(([name, state]) => {
+        const isActive = name === activeProjectTab;
+        const port = state.netlifyPort || state.vitePort;
+        return `
+          <button class="project-tab ${isActive ? 'active' : ''}" data-project="${name}">
+            <span>${name}</span>
+            ${port ? `<span class="tab-port">:${port}</span>` : ''}
+            <span class="tab-close" data-close="${name}">✕</span>
+          </button>
+        `;
+      }).join('');
+
+      // Add click handlers
+      tabsBar.querySelectorAll('.project-tab').forEach(tab => {
+        tab.addEventListener('click', (e) => {
+          if (e.target.classList.contains('tab-close')) {
+            e.stopPropagation();
+            closeProjectTab(e.target.dataset.close);
+          } else {
+            switchToProjectTab(tab.dataset.project);
+          }
+        });
+      });
+    }
+
+    function updateStatusIndicators() {
+      const claudeDot = document.querySelector('.status-dot:nth-child(1)');
+      const netlifyDot = document.querySelector('.status-dot:nth-child(2)');
+      if (claudeDot) claudeDot.classList.toggle('running', claudeRunning);
+      if (netlifyDot) netlifyDot.classList.toggle('running', netlifyRunning);
+    }
     let attachedFiles = [];
     let currentDevice = 'desktop';
     let currentOrientation = 'portrait';
@@ -1942,6 +2146,8 @@
         // Re-send current project state on reconnect
         if (selectedProject) {
           ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
+          // Also restart dev server on reconnect
+          ws.send(JSON.stringify({ type: 'start-netlify', project: selectedProject }));
         }
       };
 
@@ -1958,63 +2164,131 @@
 
     // Handle incoming messages
     function handleMessage(data) {
-      switch (data.type) {
-        case 'claude-output':
-          if (currentTaskId) {
-            appendToTask(currentTaskId, data.data);
-          }
-          // Check if task is complete
-          if (data.data.includes('Kommando færdig')) {
+      const msgProject = data.project;
+
+      // Update project state if message has a project
+      if (msgProject && openProjects.has(msgProject)) {
+        const state = openProjects.get(msgProject);
+
+        switch (data.type) {
+          case 'claude-output':
+            // Store output in project state
+            const line = `<p class="terminal-line">${escapeHtml(data.data)}</p>`;
+            state.terminalOutput = (state.terminalOutput || '') + line;
+            break;
+          case 'claude-started':
+            state.claudeReady = true;
+            break;
+          case 'claude-stopped':
+            state.claudeReady = false;
+            break;
+          case 'netlify-started':
+            state.netlifyRunning = true;
+            break;
+          case 'netlify-stopped':
+            state.netlifyRunning = false;
+            state.vitePort = null;
+            state.netlifyPort = null;
+            break;
+          case 'preview-url':
+            const urlPort = data.url.match(/localhost:(\d+)/);
+            if (urlPort) {
+              const port = urlPort[1];
+              if (parseInt(port) >= 8880) {
+                state.netlifyPort = port;
+              } else {
+                state.vitePort = port;
+              }
+            }
+            renderProjectTabs(); // Update port in tab
+            break;
+        }
+      }
+
+      // Only update UI if this is for the active project (or no project specified)
+      if (!msgProject || msgProject === activeProjectTab) {
+        switch (data.type) {
+          case 'claude-output':
+            if (currentTaskId) {
+              appendToTask(currentTaskId, data.data);
+            }
+            // Check if task is complete
+            if (data.data.includes('Kommando færdig')) {
+              hideWorkingOverlay();
+              if (currentTaskId) {
+                completeTask(currentTaskId);
+              }
+            }
+            // Also stop timer on error
+            if (data.data.includes('⚠️') || data.data.includes('❌')) {
+              if (currentTaskId) {
+                stopTaskTimer(currentTaskId);
+              }
+            }
+            break;
+          case 'claude-started':
+            setClaudeRunning(true);
+            break;
+          case 'claude-stopped':
             hideWorkingOverlay();
-            if (currentTaskId) {
-              completeTask(currentTaskId);
+            setClaudeRunning(false);
+            break;
+          case 'netlify-output':
+            updateNetlifyStatus(data.data);
+            break;
+          case 'netlify-started':
+            setNetlifyRunning(true);
+            break;
+          case 'netlify-stopped':
+            setNetlifyRunning(false);
+            break;
+          case 'preview-url':
+            // Extract port from URL and store it
+            const urlPort = data.url.match(/localhost:(\d+)/);
+            if (urlPort) {
+              const port = urlPort[1];
+              if (parseInt(port) >= 8880) {
+                netlifyPort = port;
+                signalNetlifyReady();
+              } else {
+                vitePort = port;
+                signalViteReady();
+              }
             }
-          }
-          // Also stop timer on error
-          if (data.data.includes('⚠️') || data.data.includes('❌')) {
-            if (currentTaskId) {
-              stopTaskTimer(currentTaskId);
+            showPreview(data.url);
+            break;
+          case 'file-changed':
+            // Auto-refresh preview when files change (only for active project)
+            if ((!msgProject || msgProject === activeProjectTab) && autoRefreshEnabled && previewFrame.src) {
+              console.log(`File changed: ${data.file} (${data.event})`);
+              previewFrame.src = previewFrame.src;
             }
-          }
-          break;
-        case 'claude-started':
-          setClaudeRunning(true);
-          break;
-        case 'claude-stopped':
-          hideWorkingOverlay();
-          setClaudeRunning(false);
-          break;
-        case 'netlify-output':
-          updateNetlifyStatus(data.data);
-          break;
-        case 'netlify-started':
-          setNetlifyRunning(true);
-          break;
-        case 'netlify-stopped':
-          setNetlifyRunning(false);
-          break;
-        case 'preview-url':
-          // Extract port from URL and store it
-          const urlPort = data.url.match(/localhost:(\d+)/);
-          if (urlPort) {
-            const port = urlPort[1];
-            if (port === '8888') {
-              netlifyPort = port;
-              signalNetlifyReady();
-            } else {
-              vitePort = port;
-              signalViteReady();
-            }
-          }
-          showPreview(data.url);
-          break;
-        case 'file-changed':
-          // Auto-refresh preview when files change
-          if (autoRefreshEnabled && previewFrame.src) {
-            console.log(`File changed: ${data.file} (${data.event})`);
-            previewFrame.src = previewFrame.src;
-          }
-          break;
+            break;
+          case 'queue-update':
+            updateQueueDisplay(data.queue || []);
+            break;
+      }
+    }
+
+    // Queue display
+    function updateQueueDisplay(queue) {
+      let queueEl = document.getElementById('command-queue');
+      if (!queueEl) {
+        queueEl = document.createElement('div');
+        queueEl.id = 'command-queue';
+        queueEl.style.cssText = 'padding: 8px 12px; background: #1a1a2e; border-top: 1px solid #333; font-size: 12px; color: #888; display: none;';
+        const inputContainer = document.querySelector('.input-container');
+        if (inputContainer) {
+          inputContainer.parentNode.insertBefore(queueEl, inputContainer);
+        }
+      }
+
+      if (queue.length === 0) {
+        queueEl.style.display = 'none';
+      } else {
+        queueEl.style.display = 'block';
+        queueEl.innerHTML = '<span style="color: #4fc3f7;">📋 Kø (' + queue.length + '):</span> ' +
+          queue.map((cmd, i) => '<span style="background: #2a2a3e; padding: 2px 6px; border-radius: 3px; margin-left: 6px;">' + (i+1) + '. ' + cmd + (cmd.length >= 50 ? '...' : '') + '</span>').join('');
       }
     }
 
@@ -2512,14 +2786,18 @@
 
     // Event listeners
     projectSelect.addEventListener('change', (e) => {
-      selectedProject = e.target.value;
+      const newProject = e.target.value;
+      if (!newProject) return;
+
+      selectedProject = newProject;
       startClaudeBtn.disabled = !selectedProject;
       refreshProjectBtn.disabled = !selectedProject;
 
+      // Open project tab (creates new or switches to existing)
+      openProjectTab(newProject);
+
       // Load credentials for this project
-      if (selectedProject) {
-        loadCredentialsForProject(selectedProject);
-      }
+      loadCredentialsForProject(selectedProject);
 
       // Enable/disable service buttons
       const hasServices = selectedProject && projectServices[selectedProject];
@@ -2527,15 +2805,12 @@
       netlifyBtn2.disabled = !hasServices;
       supabaseBtn.disabled = !hasServices;
 
-      // Show loading countdown and start services
-      if (selectedProject) {
-        // Reset ports and tasks when switching projects
+      // Only start services if this is a new project (not already open)
+      const state = openProjects.get(newProject);
+      if (!state.netlifyRunning) {
+        // Show loading countdown and start services
         vitePort = null;
         netlifyPort = null;
-        tasks = [];
-        activeTaskId = null;
-        currentTaskId = null;
-        renderTasks();
 
         showProjectLoading(selectedProject, () => {
           // Countdown finished - preview should be ready
@@ -2546,28 +2821,20 @@
         if (ws && ws.readyState === WebSocket.OPEN) {
           console.log('Starting Claude and Netlify for:', selectedProject);
           ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
-
-          // Always stop netlify first when switching
-          ws.send(JSON.stringify({ type: 'stop-netlify' }));
-
-          setTimeout(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'start-netlify', project: selectedProject }));
-            }
-          }, 1000); // Longer delay to ensure cleanup
+          ws.send(JSON.stringify({ type: 'start-netlify', project: selectedProject }));
         } else {
           const checkWs = setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
               clearInterval(checkWs);
               ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
-              ws.send(JSON.stringify({ type: 'stop-netlify' }));
-              setTimeout(() => {
-                ws.send(JSON.stringify({ type: 'start-netlify', project: selectedProject }));
-              }, 1000);
+              ws.send(JSON.stringify({ type: 'start-netlify', project: selectedProject }));
             }
           }, 100);
         }
       }
+
+      // Reset dropdown to show placeholder
+      projectSelect.value = '';
     });
 
     // Service button click handlers
@@ -2658,9 +2925,18 @@
     });
 
     refreshBtn.addEventListener('click', () => {
-      if (previewFrame.src) {
+      if (previewFrame.src && previewFrame.src !== 'about:blank') {
+        // Try to refresh - if it fails, restart dev server
         previewFrame.src = previewFrame.src;
+      } else if (selectedProject) {
+        // No preview URL - restart dev server
+        wsSend({ type: 'start-netlify', project: selectedProject });
       }
+    });
+
+    // Handle iframe load errors - show message and option to restart
+    previewFrame.addEventListener('error', () => {
+      console.log('Preview iframe failed to load');
     });
 
     // File upload handling
@@ -2781,11 +3057,12 @@
         // Start timer for this task (no blocking overlay)
         startTaskTimer(activeTaskId);
 
-        console.log('Sending command to server:', command);
+        console.log('Sending command to server:', command, 'for project:', activeProjectTab);
         ws.send(JSON.stringify({
           type: 'send-command',
           command,
-          files: attachedFiles
+          files: attachedFiles,
+          project: activeProjectTab || selectedProject
         }));
         console.log('Command sent!');
         commandInput.value = '';

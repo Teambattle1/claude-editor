@@ -15,14 +15,40 @@ const GITHUB_PATH = '/Users/thomas/GITHUB';
 const PORT = 3333;
 const CLAUDE_PATH = '/Users/thomas/.local/bin/claude';
 
-// Store active processes
-let claudeProcess = null;
-let netlifyProcess = null;
-let currentProject = null;
-let claudeReady = false;
-let activeVitePort = null;
-let activeNetlifyPort = null;
-let fileWatcher = null;
+// Multi-project state management
+const projects = new Map(); // projectName -> { process, vitePort, netlifyPort, fileWatcher, claudeReady, claudeProcess, commandQueue }
+
+// Get or create project state
+function getProjectState(projectName) {
+  if (!projects.has(projectName)) {
+    projects.set(projectName, {
+      netlifyProcess: null,
+      claudeProcess: null,
+      vitePort: null,
+      netlifyPort: null,
+      fileWatcher: null,
+      claudeReady: false,
+      commandQueue: [],
+      currentWs: null
+    });
+  }
+  return projects.get(projectName);
+}
+
+// Find next available port starting from base
+async function findAvailablePort(basePort) {
+  const { execSync } = require('child_process');
+  for (let port = basePort; port < basePort + 100; port++) {
+    try {
+      execSync(`lsof -ti :${port} 2>/dev/null`);
+      // Port is in use, try next
+    } catch {
+      // Port is free
+      return port;
+    }
+  }
+  return basePort; // Fallback
+}
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
@@ -44,18 +70,19 @@ app.get('/api/projects', (req, res) => {
 wss.on('connection', (ws) => {
   console.log('Client connected');
 
-  // Send current state to newly connected client
-  if (currentProject) {
-    ws.send(JSON.stringify({ type: 'claude-started' }));
-    ws.send(JSON.stringify({ type: 'claude-output', data: `🔄 Genopkoblet til projekt: ${currentProject}\n` }));
-  }
-  if (netlifyProcess) {
-    ws.send(JSON.stringify({ type: 'netlify-started' }));
-    if (activeVitePort) {
-      ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${activeVitePort}` }));
+  // Send current state for all active projects
+  for (const [projectName, state] of projects) {
+    if (state.claudeReady) {
+      ws.send(JSON.stringify({ type: 'claude-started', project: projectName }));
     }
-    if (activeNetlifyPort) {
-      ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${activeNetlifyPort}` }));
+    if (state.netlifyProcess) {
+      ws.send(JSON.stringify({ type: 'netlify-started', project: projectName }));
+      if (state.vitePort) {
+        ws.send(JSON.stringify({ type: 'preview-url', project: projectName, url: `http://localhost:${state.vitePort}` }));
+      }
+      if (state.netlifyPort) {
+        ws.send(JSON.stringify({ type: 'preview-url', project: projectName, url: `http://localhost:${state.netlifyPort}` }));
+      }
     }
   }
 
@@ -68,20 +95,23 @@ wss.on('connection', (ws) => {
         startClaude(data.project, ws);
         break;
       case 'send-command':
-        sendCommand(data.command, data.files, ws);
+        sendCommand(data.command, data.files, data.project, ws);
         break;
       case 'start-netlify':
         console.log('Starting Netlify for:', data.project);
         startNetlify(data.project, ws);
         break;
       case 'stop-claude':
-        stopClaude(ws);
+        stopClaude(data.project, ws);
         break;
       case 'stop-current-command':
-        stopCurrentCommand(ws);
+        stopCurrentCommand(data.project, ws);
         break;
       case 'stop-netlify':
-        stopNetlify(ws);
+        stopNetlify(data.project, ws);
+        break;
+      case 'get-project-state':
+        sendProjectState(data.project, ws);
         break;
     }
   });
@@ -91,17 +121,35 @@ wss.on('connection', (ws) => {
   });
 });
 
+// Send current project state to client
+function sendProjectState(projectName, ws) {
+  const state = projects.get(projectName);
+  if (state) {
+    ws.send(JSON.stringify({
+      type: 'project-state',
+      project: projectName,
+      claudeReady: state.claudeReady,
+      netlifyRunning: !!state.netlifyProcess,
+      vitePort: state.vitePort,
+      netlifyPort: state.netlifyPort,
+      queueLength: state.commandQueue.length
+    }));
+  }
+}
+
 // File watcher for auto-refresh
 function startFileWatcher(project) {
-  if (fileWatcher) {
-    fileWatcher.close();
-    fileWatcher = null;
+  const state = getProjectState(project);
+
+  if (state.fileWatcher) {
+    state.fileWatcher.close();
+    state.fileWatcher = null;
   }
 
   const projectPath = path.join(GITHUB_PATH, project);
 
   // Watch for file changes, ignore node_modules, .git, etc.
-  fileWatcher = chokidar.watch(projectPath, {
+  state.fileWatcher = chokidar.watch(projectPath, {
     ignored: [
       '**/node_modules/**',
       '**/.git/**',
@@ -119,7 +167,7 @@ function startFileWatcher(project) {
   // Debounce file changes to avoid too many refreshes
   let debounceTimer = null;
 
-  fileWatcher.on('all', (event, filePath) => {
+  state.fileWatcher.on('all', (event, filePath) => {
     if (debounceTimer) {
       clearTimeout(debounceTimer);
     }
@@ -133,6 +181,7 @@ function startFileWatcher(project) {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify({
             type: 'file-changed',
+            project,
             event: event,
             file: relativePath
           }));
@@ -142,14 +191,6 @@ function startFileWatcher(project) {
   });
 
   console.log(`File watcher started for ${project}`);
-}
-
-function stopFileWatcher() {
-  if (fileWatcher) {
-    fileWatcher.close();
-    fileWatcher = null;
-    console.log('File watcher stopped');
-  }
 }
 
 // Clean up temp files older than 1 hour
@@ -176,32 +217,80 @@ function cleanupTempFiles(projectPath) {
 }
 
 function startClaude(project, ws) {
-  currentProject = project;
-  claudeReady = true;
+  const state = getProjectState(project);
+  state.claudeReady = true;
 
   const projectPath = path.join(GITHUB_PATH, project);
 
   // Clean up old temp files when starting a new session
   cleanupTempFiles(projectPath);
 
-  ws.send(JSON.stringify({ type: 'claude-output', data: `\n🚀 Claude er klar til projekt: ${project}\n` }));
-  ws.send(JSON.stringify({ type: 'claude-output', data: `📁 Arbejdsmappe: ${projectPath}\n\n` }));
-  ws.send(JSON.stringify({ type: 'claude-output', data: `✅ Skriv dine kommandoer nedenfor - hver kommando sendes til Claude.\n\n` }));
-  ws.send(JSON.stringify({ type: 'claude-started' }));
+  ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n🚀 Claude er klar til projekt: ${project}\n` }));
+  ws.send(JSON.stringify({ type: 'claude-output', project, data: `📁 Arbejdsmappe: ${projectPath}\n\n` }));
+  ws.send(JSON.stringify({ type: 'claude-output', project, data: `✅ Skriv dine kommandoer nedenfor - hver kommando sendes til Claude.\n\n` }));
+  ws.send(JSON.stringify({ type: 'claude-started', project }));
 }
 
-async function sendCommand(command, files, ws) {
-  if (!claudeReady || !currentProject) {
-    ws.send(JSON.stringify({ type: 'claude-output', data: '\n⚠️ Vælg først et projekt og klik "START CLAUDE".\n' }));
+// Process Claude stream-json output and send to client
+function processClaudeOutput(content, project, ws, buffer = '') {
+  buffer += content;
+  const lines = buffer.split('\n');
+  buffer = lines.pop(); // Keep incomplete line
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const json = JSON.parse(line);
+
+      if (json.type === 'assistant' && json.message?.content) {
+        for (const block of json.message.content) {
+          if (block.type === 'text') {
+            ws.send(JSON.stringify({ type: 'claude-output', project, data: block.text }));
+          } else if (block.type === 'tool_use') {
+            ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n🔧 ${block.name}: ${JSON.stringify(block.input).substring(0, 100)}...\n` }));
+          }
+        }
+      } else if (json.type === 'content_block_delta' && json.delta?.text) {
+        ws.send(JSON.stringify({ type: 'claude-output', project, data: json.delta.text }));
+      } else if (json.type === 'system') {
+        // Show system messages like "Reading file..."
+        if (json.message) {
+          ws.send(JSON.stringify({ type: 'claude-output', project, data: `📋 ${json.message}\n` }));
+        }
+      }
+      console.log('Claude JSON type:', json.type);
+    } catch (e) {
+      // Not JSON, show as raw output
+      if (line.trim()) {
+        console.log('Claude raw:', line.substring(0, 100));
+        ws.send(JSON.stringify({ type: 'claude-output', project, data: line + '\n' }));
+      }
+    }
+  }
+
+  return buffer;
+}
+
+async function sendCommand(command, files, project, ws, fromQueue = false) {
+  const state = getProjectState(project);
+
+  if (!state.claudeReady) {
+    ws.send(JSON.stringify({ type: 'claude-output', project, data: '\n⚠️ Klik "START CLAUDE" først.\n' }));
     return;
   }
 
-  if (claudeProcess) {
-    ws.send(JSON.stringify({ type: 'claude-output', data: '\n⏳ Vent venligst - Claude arbejder stadig på forrige kommando...\n' }));
+  // If a command is running and this isn't from the queue, add to queue
+  if (state.claudeProcess && !fromQueue) {
+    const queueItem = { command, files };
+    state.commandQueue.push(queueItem);
+    state.currentWs = ws;
+    const queuePosition = state.commandQueue.length;
+    ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n📋 Kommando sat i kø (position ${queuePosition}): ${command.substring(0, 50)}${command.length > 50 ? '...' : ''}\n` }));
+    ws.send(JSON.stringify({ type: 'queue-update', project, queue: state.commandQueue.map(q => q.command.substring(0, 50)) }));
     return;
   }
 
-  const projectPath = path.join(GITHUB_PATH, currentProject);
+  const projectPath = path.join(GITHUB_PATH, project);
   const tempDir = path.join(projectPath, '.claude-temp');
 
   // Build the full prompt with file contents
@@ -217,7 +306,7 @@ async function sendCommand(command, files, ws) {
       for (const file of textFiles) {
         fullPrompt += `\n### ${file.name}\n\`\`\`\n${file.data}\n\`\`\`\n`;
       }
-      ws.send(JSON.stringify({ type: 'claude-output', data: `📎 ${textFiles.length} tekstfil(er) inkluderet i prompt\n` }));
+      ws.send(JSON.stringify({ type: 'claude-output', project, data: `📎 ${textFiles.length} tekstfil(er) inkluderet i prompt\n` }));
     }
 
     // Save images to temp folder and include paths in prompt
@@ -244,134 +333,193 @@ async function sendCommand(command, files, ws) {
         fullPrompt += `- ${file.name}: ${absolutePath}\n`;
       }
 
-      ws.send(JSON.stringify({ type: 'claude-output', data: `🖼️ ${imageFiles.length} billede(r) gemt i .claude-temp/ - Claude kan læse dem\n` }));
+      ws.send(JSON.stringify({ type: 'claude-output', project, data: `🖼️ ${imageFiles.length} billede(r) gemt i .claude-temp/ - Claude kan læse dem\n` }));
     }
   }
 
-  ws.send(JSON.stringify({ type: 'claude-output', data: `\n💬 > ${command}\n\n` }));
+  ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n💬 > ${command}\n\n` }));
 
-  // Build arguments array - use stream-json for real-time output without TTY
-  // --verbose is required when using stream-json with -p
-  const args = ['-p', fullPrompt, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
+  // Ensure temp directory exists and write prompt to file
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+    fs.writeFileSync(path.join(tempDir, '.gitignore'), '*\n');
+  }
+  const tempPromptFile = path.join(tempDir, 'prompt.txt');
+  fs.writeFileSync(tempPromptFile, fullPrompt);
 
+  // Use shell script to run Claude and capture output
+  const outputFile = path.join(tempDir, `output-${Date.now()}.jsonl`);
+  const scriptContent = `#!/bin/bash
+cd "${projectPath}"
+"${CLAUDE_PATH}" -p "$(cat "${tempPromptFile}")" --dangerously-skip-permissions --output-format stream-json --verbose > "${outputFile}" 2>&1 &
+echo $!
+`;
+  const scriptFile = path.join(tempDir, 'run-claude.sh');
+  fs.writeFileSync(scriptFile, scriptContent);
+  fs.chmodSync(scriptFile, '755');
 
-  console.log('Starting Claude with args:', args);
-  console.log('Working directory:', projectPath);
+  console.log('Starting Claude in:', projectPath);
+  ws.send(JSON.stringify({ type: 'claude-output', project, data: '⏳ Claude starter...\n' }));
 
-  // Spawn Claude directly with stream-json output format
-  claudeProcess = spawn(CLAUDE_PATH, args, {
-    cwd: projectPath,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      PATH: process.env.PATH + ':/Users/thomas/.local/bin:/usr/local/bin'
-    }
-  });
+  // Run the script to get PID
+  const { execSync } = require('child_process');
+  let claudePid;
+  try {
+    claudePid = execSync(`bash "${scriptFile}"`, { encoding: 'utf8' }).trim();
+    console.log('Claude process PID:', claudePid);
+  } catch (err) {
+    ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n❌ Kunne ikke starte Claude: ${err.message}\n` }));
+    return;
+  }
 
-  console.log('Claude process PID:', claudeProcess.pid);
-  ws.send(JSON.stringify({ type: 'claude-output', data: '⏳ Claude arbejder...\n' }));
+  ws.send(JSON.stringify({ type: 'claude-output', project, data: `⏳ Claude arbejder (PID: ${claudePid})...\n` }));
 
-  // Buffer for incomplete JSON lines
+  // Poll output file for new content
+  let lastSize = 0;
   let buffer = '';
+  let checkCount = 0;
+  const maxChecks = 600; // 10 minutes max
 
-  claudeProcess.stdout.on('data', (data) => {
-    buffer += data.toString();
-    const lines = buffer.split('\n');
-    buffer = lines.pop(); // Keep incomplete line in buffer
+  const pollInterval = setInterval(() => {
+    checkCount++;
 
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const json = JSON.parse(line);
-        // Handle different message types from stream-json
-        if (json.type === 'assistant' && json.message?.content) {
-          for (const block of json.message.content) {
-            if (block.type === 'text') {
-              ws.send(JSON.stringify({ type: 'claude-output', data: block.text }));
-            } else if (block.type === 'tool_use') {
-              ws.send(JSON.stringify({ type: 'claude-output', data: `\n🔧 ${block.name}: ${JSON.stringify(block.input).substring(0, 100)}...\n` }));
-            }
-          }
-        } else if (json.type === 'content_block_delta' && json.delta?.text) {
-          ws.send(JSON.stringify({ type: 'claude-output', data: json.delta.text }));
-        }
-        // Skip 'result' type - it duplicates the assistant message content
-        console.log('Claude JSON type:', json.type);
-      } catch (e) {
-        // Not JSON, send as-is
-        console.log('Claude raw output:', line.substring(0, 100));
-        ws.send(JSON.stringify({ type: 'claude-output', data: line + '\n' }));
+    // Check if process is still running
+    try {
+      execSync(`kill -0 ${claudePid} 2>/dev/null`);
+    } catch {
+      // Process ended
+      clearInterval(pollInterval);
+
+      // Read remaining output
+      if (fs.existsSync(outputFile)) {
+        const finalContent = fs.readFileSync(outputFile, 'utf8');
+        processClaudeOutput(finalContent.slice(lastSize), project, ws, buffer);
+        try { fs.unlinkSync(outputFile); } catch {}
+      }
+      try { fs.unlinkSync(tempPromptFile); } catch {}
+      try { fs.unlinkSync(scriptFile); } catch {}
+
+      ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n\n✅ Kommando færdig.\n` }));
+      state.claudeProcess = null;
+
+      // Process next command in queue
+      processNextInQueue(project, ws);
+      return;
+    }
+
+    // Read new content from output file
+    if (fs.existsSync(outputFile)) {
+      const stats = fs.statSync(outputFile);
+      if (stats.size > lastSize) {
+        const fd = fs.openSync(outputFile, 'r');
+        const newContent = Buffer.alloc(stats.size - lastSize);
+        fs.readSync(fd, newContent, 0, stats.size - lastSize, lastSize);
+        fs.closeSync(fd);
+        lastSize = stats.size;
+
+        buffer = processClaudeOutput(newContent.toString(), project, ws, buffer);
       }
     }
-  });
 
-  claudeProcess.stderr.on('data', (data) => {
-    const output = data.toString();
-    console.log('Claude stderr:', output.substring(0, 100));
-    // Don't show stderr to user unless it's an error
-  });
+    if (checkCount >= maxChecks) {
+      clearInterval(pollInterval);
+      try { execSync(`kill ${claudePid}`); } catch {}
+      ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n\n⏱️ Timeout efter 10 minutter.\n` }));
+      state.claudeProcess = null;
+    }
+  }, 1000);
 
-  claudeProcess.on('close', (code) => {
-    console.log('Claude exited with code:', code);
-    ws.send(JSON.stringify({ type: 'claude-output', data: `\n\n✅ Kommando færdig (kode: ${code}).\n` }));
-    claudeProcess = null;
-  });
+  // Store interval so we can stop it
+  state.claudeProcess = { pid: claudePid, interval: pollInterval };
 }
 
-function stopClaude(ws) {
-  if (claudeProcess) {
-    const proc = claudeProcess;
-    claudeProcess = null; // Prevent new commands while stopping
-    proc.on('close', () => {
-      ws.send(JSON.stringify({ type: 'claude-output', data: '\n\n🛑 Claude session stoppet.\n' }));
-      ws.send(JSON.stringify({ type: 'claude-stopped' }));
-    });
-    proc.kill('SIGTERM');
-    // Fallback if process doesn't close gracefully
-    setTimeout(() => {
-      try { proc.kill('SIGKILL'); } catch (e) {}
-    }, 3000);
-  } else {
-    ws.send(JSON.stringify({ type: 'claude-output', data: '\n\n🛑 Claude session stoppet.\n' }));
-    ws.send(JSON.stringify({ type: 'claude-stopped' }));
+function processNextInQueue(project, ws) {
+  const state = getProjectState(project);
+
+  if (state.commandQueue.length === 0) {
+    return;
   }
-  claudeReady = false;
-  currentProject = null;
+
+  const nextCommand = state.commandQueue.shift();
+  const targetWs = state.currentWs || ws;
+
+  targetWs.send(JSON.stringify({ type: 'claude-output', project, data: `\n📋 Kører næste kommando fra kø (${state.commandQueue.length} tilbage)...\n` }));
+  targetWs.send(JSON.stringify({ type: 'queue-update', project, queue: state.commandQueue.map(q => q.command.substring(0, 50)) }));
+
+  // Small delay before starting next command
+  setTimeout(() => {
+    sendCommand(nextCommand.command, nextCommand.files, project, targetWs, true);
+  }, 500);
 }
 
-function stopCurrentCommand(ws) {
-  if (claudeProcess) {
-    claudeProcess.kill('SIGTERM');
-    claudeProcess = null;
-    ws.send(JSON.stringify({ type: 'claude-output', data: '\n\n⬛ Kommando stoppet.\n' }));
+function stopClaude(project, ws) {
+  const state = getProjectState(project);
+  const { execSync } = require('child_process');
+
+  if (state.claudeProcess) {
+    // Stop the polling interval
+    if (state.claudeProcess.interval) {
+      clearInterval(state.claudeProcess.interval);
+    }
+    // Kill the Claude process
+    if (state.claudeProcess.pid) {
+      try { execSync(`kill ${state.claudeProcess.pid} 2>/dev/null`); } catch {}
+    }
+    state.claudeProcess = null;
+  }
+  // Clear the command queue
+  const queuedCount = state.commandQueue.length;
+  state.commandQueue.length = 0;
+  state.currentWs = null;
+  if (queuedCount > 0) {
+    ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n🗑️ ${queuedCount} kommando(er) fjernet fra kø.\n` }));
+  }
+  ws.send(JSON.stringify({ type: 'queue-update', project, queue: [] }));
+  ws.send(JSON.stringify({ type: 'claude-output', project, data: '\n\n🛑 Claude session stoppet.\n' }));
+  ws.send(JSON.stringify({ type: 'claude-stopped', project }));
+  state.claudeReady = false;
+}
+
+function stopCurrentCommand(project, ws) {
+  const state = getProjectState(project);
+  const { execSync } = require('child_process');
+
+  if (state.claudeProcess) {
+    // Stop the polling interval
+    if (state.claudeProcess.interval) {
+      clearInterval(state.claudeProcess.interval);
+    }
+    // Kill the Claude process
+    if (state.claudeProcess.pid) {
+      try { execSync(`kill ${state.claudeProcess.pid} 2>/dev/null`); } catch {}
+    }
+    state.claudeProcess = null;
+    ws.send(JSON.stringify({ type: 'claude-output', project, data: '\n\n⬛ Kommando stoppet.\n' }));
   }
 }
 
 async function killProcessOnPort(port) {
-  return new Promise((resolve) => {
-    const findProcess = spawn('sh', ['-c', `lsof -ti :${port}`]);
-    let pids = '';
-
-    findProcess.stdout.on('data', (data) => {
-      pids += data.toString();
-    });
-
-    findProcess.on('close', () => {
-      const pidList = pids.trim().split('\n').filter(p => p);
-      if (pidList.length > 0) {
-        pidList.forEach(pid => {
-          try {
-            spawn('sh', ['-c', `kill -9 ${pid}`]);
-          } catch (e) {}
-        });
-      }
-      setTimeout(resolve, 500);
-    });
-  });
+  const { execSync } = require('child_process');
+  try {
+    const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' }).trim();
+    if (pids) {
+      const pidList = pids.split('\n').filter(p => p);
+      pidList.forEach(pid => {
+        try {
+          execSync(`kill -9 ${pid} 2>/dev/null`);
+        } catch (e) {}
+      });
+    }
+  } catch (e) {
+    // Port not in use or command failed - that's fine
+  }
+  await new Promise(r => setTimeout(r, 200));
 }
 
 // Detect port from dev server output and send to client
-function detectAndSendPort(output, ws) {
+function detectAndSendPort(output, project, ws) {
+  const state = getProjectState(project);
+
   // Skip "waiting for" messages - they mention ports but aren't ready yet
   if (output.toLowerCase().includes('waiting for')) {
     return;
@@ -401,20 +549,20 @@ function detectAndSendPort(output, ws) {
       // Skip if this is just a random port mention (too low or too high)
       if (portNum < 3000 || portNum > 9999) continue;
 
-      console.log('Detected port:', port, 'type:', type, 'from output:', output.substring(0, 50));
+      console.log('Detected port:', port, 'type:', type, 'for project:', project);
 
       // Determine if this is a Netlify proxy port or a dev server port
-      if (port === '8888') {
-        // Always update Netlify port and send URL
-        activeNetlifyPort = port;
-        console.log('Sending Netlify preview-url:', port);
-        ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${port}` }));
+      if (port === '8888' || portNum >= 8880) {
+        // Netlify proxy port
+        state.netlifyPort = port;
+        console.log('Sending Netlify preview-url:', port, 'for:', project);
+        ws.send(JSON.stringify({ type: 'preview-url', project, url: `http://localhost:${port}` }));
       } else {
-        // Only set Vite port if not already set, or if this is a confirmed ready message
-        if (!activeVitePort || type === 'vite-ready' || type === 'confirmed-ready') {
-          activeVitePort = port;
-          console.log('Sending Vite preview-url:', port);
-          ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${port}` }));
+        // Vite/dev server port
+        if (!state.vitePort || type === 'vite-ready' || type === 'confirmed-ready') {
+          state.vitePort = port;
+          console.log('Sending Vite preview-url:', port, 'for:', project);
+          ws.send(JSON.stringify({ type: 'preview-url', project, url: `http://localhost:${port}` }));
         }
       }
       break; // Only process the first matching pattern
@@ -455,23 +603,16 @@ function detectDevCommand(projectPath) {
 }
 
 async function startNetlify(project, ws) {
-  if (netlifyProcess) {
-    ws.send(JSON.stringify({ type: 'netlify-output', data: '\n⚠️ Stopper eksisterende dev server...\n' }));
-    netlifyProcess.kill('SIGTERM');
-    netlifyProcess = null;
-    await new Promise(r => setTimeout(r, 1000));
-  }
+  const state = getProjectState(project);
 
-  // Kill any existing processes on common dev ports
-  ws.send(JSON.stringify({ type: 'netlify-output', data: '🔄 Rydder op i eksisterende porte...\n' }));
-  await killProcessOnPort(8888);
-  await killProcessOnPort(8080);
-  await killProcessOnPort(8081);
-  await killProcessOnPort(3000);
-  await killProcessOnPort(5000);
-  // Also kill common Vite ports
-  for (let port = 5173; port <= 5190; port++) {
-    await killProcessOnPort(port);
+  // Stop existing process for this project
+  if (state.netlifyProcess) {
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: '\n⚠️ Stopper eksisterende dev server...\n' }));
+    state.netlifyProcess.kill('SIGTERM');
+    state.netlifyProcess = null;
+    state.vitePort = null;
+    state.netlifyPort = null;
+    await new Promise(r => setTimeout(r, 1000));
   }
 
   const projectPath = path.join(GITHUB_PATH, project);
@@ -480,55 +621,56 @@ async function startNetlify(project, ws) {
   const devCommand = detectDevCommand(projectPath);
 
   if (!devCommand) {
-    ws.send(JSON.stringify({ type: 'netlify-output', data: '⚠️ Kunne ikke finde dev kommando (ingen netlify.toml, vite.config, eller package.json scripts)\n' }));
-    ws.send(JSON.stringify({ type: 'netlify-output', data: '💡 Prøv at åbne projektet manuelt med: cd ' + projectPath + ' && npm run dev\n' }));
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: '⚠️ Kunne ikke finde dev kommando (ingen netlify.toml, vite.config, eller package.json scripts)\n' }));
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: '💡 Prøv at åbne projektet manuelt med: cd ' + projectPath + ' && npm run dev\n' }));
     return;
   }
 
   // Check if node_modules exists, if not install dependencies
   const nodeModulesPath = path.join(projectPath, 'node_modules');
   if (!fs.existsSync(nodeModulesPath)) {
-    ws.send(JSON.stringify({ type: 'netlify-output', data: '📦 node_modules mangler - installerer dependencies...\n' }));
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: '📦 node_modules mangler - installerer dependencies...\n' }));
 
     // Check which package manager to use
     const hasPnpmLock = fs.existsSync(path.join(projectPath, 'pnpm-lock.yaml'));
     const hasYarnLock = fs.existsSync(path.join(projectPath, 'yarn.lock'));
     const installCmd = hasPnpmLock ? 'pnpm' : (hasYarnLock ? 'yarn' : 'npm');
 
-    ws.send(JSON.stringify({ type: 'netlify-output', data: `🔧 Kører ${installCmd} install...\n` }));
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: `🔧 Kører ${installCmd} install...\n` }));
 
     try {
+      const { exec } = require('child_process');
       await new Promise((resolve, reject) => {
-        const installProcess = spawn(installCmd, ['install'], {
+        const installProcess = exec(`${installCmd} install`, {
           cwd: projectPath,
-          shell: true
+          maxBuffer: 50 * 1024 * 1024
         });
 
         installProcess.stdout.on('data', (data) => {
-          ws.send(JSON.stringify({ type: 'netlify-output', data: data.toString() }));
+          ws.send(JSON.stringify({ type: 'netlify-output', project, data: data.toString() }));
         });
 
         installProcess.stderr.on('data', (data) => {
-          ws.send(JSON.stringify({ type: 'netlify-output', data: data.toString() }));
+          ws.send(JSON.stringify({ type: 'netlify-output', project, data: data.toString() }));
         });
 
         installProcess.on('close', (code) => {
           if (code === 0) {
-            ws.send(JSON.stringify({ type: 'netlify-output', data: '✅ Dependencies installeret!\n\n' }));
+            ws.send(JSON.stringify({ type: 'netlify-output', project, data: '✅ Dependencies installeret!\n\n' }));
             resolve();
           } else {
-            ws.send(JSON.stringify({ type: 'netlify-output', data: `❌ Installation fejlede (kode: ${code})\n` }));
+            ws.send(JSON.stringify({ type: 'netlify-output', project, data: `❌ Installation fejlede (kode: ${code})\n` }));
             reject(new Error(`Install failed with code ${code}`));
           }
         });
 
         installProcess.on('error', (err) => {
-          ws.send(JSON.stringify({ type: 'netlify-output', data: `❌ Installationsfejl: ${err.message}\n` }));
+          ws.send(JSON.stringify({ type: 'netlify-output', project, data: `❌ Installationsfejl: ${err.message}\n` }));
           reject(err);
         });
       });
     } catch (err) {
-      ws.send(JSON.stringify({ type: 'netlify-output', data: `⚠️ Fortsætter uden dependencies...\n` }));
+      ws.send(JSON.stringify({ type: 'netlify-output', project, data: `⚠️ Fortsætter uden dependencies...\n` }));
     }
   }
 
@@ -539,61 +681,76 @@ async function startNetlify(project, ws) {
     'npm-start': '📦 npm start'
   };
 
-  ws.send(JSON.stringify({ type: 'netlify-output', data: `\n${typeLabels[devCommand.type]} starter i ${project}...\n` }));
-  ws.send(JSON.stringify({ type: 'netlify-output', data: `Kommando: ${devCommand.cmd} ${devCommand.args.join(' ')}\n\n` }));
+  const cmdLine = `${devCommand.cmd} ${devCommand.args.join(' ')}`;
+  ws.send(JSON.stringify({ type: 'netlify-output', project, data: `\n${typeLabels[devCommand.type]} starter i ${project}...\n` }));
+  ws.send(JSON.stringify({ type: 'netlify-output', project, data: `Kommando: ${cmdLine}\n\n` }));
 
-  netlifyProcess = spawn(devCommand.cmd, devCommand.args, {
+  // Use exec for better compatibility with Node.js v25
+  const { exec } = require('child_process');
+
+  state.netlifyProcess = exec(cmdLine, {
     cwd: projectPath,
-    env: { ...process.env, FORCE_COLOR: '1', BROWSER: 'none' },
-    shell: true
+    maxBuffer: 50 * 1024 * 1024,
+    env: { ...process.env, FORCE_COLOR: '1', BROWSER: 'none' }
   });
 
-  netlifyProcess.stdout.on('data', (data) => {
+  if (!state.netlifyProcess) {
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: `\n❌ Kunne ikke starte dev server\n` }));
+    return;
+  }
+
+  state.netlifyProcess.stdout.on('data', (data) => {
     const output = data.toString();
     console.log('Dev server stdout:', output.substring(0, 100));
-    ws.send(JSON.stringify({ type: 'netlify-output', data: output }));
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: output }));
 
     // Detect ports from various patterns
-    detectAndSendPort(output, ws);
+    detectAndSendPort(output, project, ws);
   });
 
-  netlifyProcess.stderr.on('data', (data) => {
+  state.netlifyProcess.stderr.on('data', (data) => {
     const output = data.toString();
     console.log('Dev server stderr:', output.substring(0, 100));
-    ws.send(JSON.stringify({ type: 'netlify-output', data: output }));
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: output }));
 
     // Detect ports from various patterns
-    detectAndSendPort(output, ws);
+    detectAndSendPort(output, project, ws);
   });
 
-  netlifyProcess.on('error', (err) => {
+  state.netlifyProcess.on('error', (err) => {
     console.log('Dev server process error:', err.message);
-    ws.send(JSON.stringify({ type: 'netlify-output', data: `\n❌ Dev server fejl: ${err.message}\n` }));
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: `\n❌ Dev server fejl: ${err.message}\n` }));
   });
 
-  netlifyProcess.on('close', (code) => {
-    ws.send(JSON.stringify({ type: 'netlify-output', data: `\n\n📋 Dev server afsluttet med kode ${code}\n` }));
-    ws.send(JSON.stringify({ type: 'netlify-stopped' }));
-    netlifyProcess = null;
-    activeVitePort = null;
-    activeNetlifyPort = null;
+  state.netlifyProcess.on('close', (code) => {
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: `\n\n📋 Dev server afsluttet med kode ${code}\n` }));
+    ws.send(JSON.stringify({ type: 'netlify-stopped', project }));
+    state.netlifyProcess = null;
+    state.vitePort = null;
+    state.netlifyPort = null;
   });
 
-  ws.send(JSON.stringify({ type: 'netlify-started' }));
+  ws.send(JSON.stringify({ type: 'netlify-started', project }));
 
   // Start file watcher for auto-refresh
   startFileWatcher(project);
 }
 
-function stopNetlify(ws) {
-  stopFileWatcher();
-  if (netlifyProcess) {
-    netlifyProcess.kill('SIGTERM');
-    netlifyProcess = null;
-    activeVitePort = null;
-    activeNetlifyPort = null;
-    ws.send(JSON.stringify({ type: 'netlify-output', data: '\n\n🛑 Netlify dev stoppet.\n' }));
-    ws.send(JSON.stringify({ type: 'netlify-stopped' }));
+function stopNetlify(project, ws) {
+  const state = getProjectState(project);
+
+  if (state.fileWatcher) {
+    state.fileWatcher.close();
+    state.fileWatcher = null;
+  }
+
+  if (state.netlifyProcess) {
+    state.netlifyProcess.kill('SIGTERM');
+    state.netlifyProcess = null;
+    state.vitePort = null;
+    state.netlifyPort = null;
+    ws.send(JSON.stringify({ type: 'netlify-output', project, data: '\n\n🛑 Dev server stoppet.\n' }));
+    ws.send(JSON.stringify({ type: 'netlify-stopped', project }));
   }
 }
 
