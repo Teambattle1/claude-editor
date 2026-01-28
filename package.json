@@ -1,7 +1,7 @@
 {
-  "name": "claude-editor",
+  "name": "sunkez-claude-editor",
   "version": "1.0.0",
-  "description": "Visual Claude Editor with live preview",
+  "description": "Sunkez Claude Editor with live preview",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

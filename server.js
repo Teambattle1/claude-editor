@@ -192,13 +192,23 @@ async function sendCommand(command, files, ws) {
 
 function stopClaude(ws) {
   if (claudeProcess) {
-    claudeProcess.kill('SIGTERM');
-    claudeProcess = null;
+    const proc = claudeProcess;
+    claudeProcess = null; // Prevent new commands while stopping
+    proc.on('close', () => {
+      ws.send(JSON.stringify({ type: 'claude-output', data: '\n\n🛑 Claude session stoppet.\n' }));
+      ws.send(JSON.stringify({ type: 'claude-stopped' }));
+    });
+    proc.kill('SIGTERM');
+    // Fallback if process doesn't close gracefully
+    setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch (e) {}
+    }, 3000);
+  } else {
+    ws.send(JSON.stringify({ type: 'claude-output', data: '\n\n🛑 Claude session stoppet.\n' }));
+    ws.send(JSON.stringify({ type: 'claude-stopped' }));
   }
   claudeReady = false;
   currentProject = null;
-  ws.send(JSON.stringify({ type: 'claude-output', data: '\n\n🛑 Claude session stoppet.\n' }));
-  ws.send(JSON.stringify({ type: 'claude-stopped' }));
 }
 
 function stopCurrentCommand(ws) {
@@ -211,7 +221,7 @@ function stopCurrentCommand(ws) {
 
 async function killProcessOnPort(port) {
   return new Promise((resolve) => {
-    const findProcess = spawn('lsof', ['-ti', `:${port}`], { shell: true });
+    const findProcess = spawn('sh', ['-c', `lsof -ti :${port}`]);
     let pids = '';
 
     findProcess.stdout.on('data', (data) => {
@@ -223,7 +233,7 @@ async function killProcessOnPort(port) {
       if (pidList.length > 0) {
         pidList.forEach(pid => {
           try {
-            spawn('kill', ['-9', pid], { shell: true });
+            spawn('sh', ['-c', `kill -9 ${pid}`]);
           } catch (e) {}
         });
       }
@@ -266,30 +276,39 @@ async function startNetlify(project, ws) {
 
     ws.send(JSON.stringify({ type: 'netlify-output', data: `🔧 Kører ${installCmd} install...\n` }));
 
-    await new Promise((resolve, reject) => {
-      const installProcess = spawn(installCmd, ['install'], {
-        cwd: projectPath,
-        shell: true
-      });
+    try {
+      await new Promise((resolve, reject) => {
+        const installProcess = spawn(installCmd, ['install'], {
+          cwd: projectPath,
+          shell: true
+        });
 
-      installProcess.stdout.on('data', (data) => {
-        ws.send(JSON.stringify({ type: 'netlify-output', data: data.toString() }));
-      });
+        installProcess.stdout.on('data', (data) => {
+          ws.send(JSON.stringify({ type: 'netlify-output', data: data.toString() }));
+        });
 
-      installProcess.stderr.on('data', (data) => {
-        ws.send(JSON.stringify({ type: 'netlify-output', data: data.toString() }));
-      });
+        installProcess.stderr.on('data', (data) => {
+          ws.send(JSON.stringify({ type: 'netlify-output', data: data.toString() }));
+        });
 
-      installProcess.on('close', (code) => {
-        if (code === 0) {
-          ws.send(JSON.stringify({ type: 'netlify-output', data: '✅ Dependencies installeret!\n\n' }));
-          resolve();
-        } else {
-          ws.send(JSON.stringify({ type: 'netlify-output', data: `❌ Installation fejlede (kode: ${code})\n` }));
-          reject(new Error(`Install failed with code ${code}`));
-        }
+        installProcess.on('close', (code) => {
+          if (code === 0) {
+            ws.send(JSON.stringify({ type: 'netlify-output', data: '✅ Dependencies installeret!\n\n' }));
+            resolve();
+          } else {
+            ws.send(JSON.stringify({ type: 'netlify-output', data: `❌ Installation fejlede (kode: ${code})\n` }));
+            reject(new Error(`Install failed with code ${code}`));
+          }
+        });
+
+        installProcess.on('error', (err) => {
+          ws.send(JSON.stringify({ type: 'netlify-output', data: `❌ Installationsfejl: ${err.message}\n` }));
+          reject(err);
+        });
       });
-    });
+    } catch (err) {
+      ws.send(JSON.stringify({ type: 'netlify-output', data: `⚠️ Fortsætter uden dependencies...\n` }));
+    }
   }
 
   ws.send(JSON.stringify({ type: 'netlify-output', data: `\n🌐 Starter Netlify Dev i ${project}...\n\n` }));
@@ -378,5 +397,5 @@ function stopNetlify(ws) {
 }
 
 server.listen(PORT, () => {
-  console.log(`\n🎨 Claude Editor kører på http://localhost:${PORT}\n`);
+  console.log(`\n🎨 Sunkez Claude Editor kører på http://localhost:${PORT}\n`);
 });

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Editor</title>
+  <title>Sunkez Claude Editor</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     * {
@@ -1515,7 +1515,7 @@
         </div>
         <div id="tasksList" class="tasks-list">
           <div class="welcome-message">
-            <h3>Velkommen til Claude Editor</h3>
+            <h3>Velkommen til Sunkez Claude Editor</h3>
             <p>Vælg et projekt og klik "START CLAUDE" for at begynde.<br>Klik "+ Ny opgave" for at starte en opgave - alle kommandoer grupperes under den aktive opgave.</p>
           </div>
         </div>
@@ -1731,9 +1731,6 @@
     const loadingProgress = document.getElementById('loadingProgress');
     const viteStatusEl = document.getElementById('viteStatus');
     const netlifyStatus2El = document.getElementById('netlifyStatus2');
-    const workingOverlay = document.getElementById('workingOverlay');
-    const workingCommand = document.getElementById('workingCommand');
-    const workingSeconds = document.getElementById('workingSeconds');
 
     let ws;
     let selectedProject = '';
@@ -1745,8 +1742,6 @@
     let tasks = [];
     let currentTaskId = null;
     let activeTaskId = null; // Task that commands are added to
-    let workingTimerInterval = null;
-    let workingStartTime = null;
     let autoRefreshEnabled = true;
     const autoRefreshToggle = document.getElementById('autoRefreshToggle');
     let currentPreviewMode = 'vite';
@@ -2119,7 +2114,7 @@
         } else {
           tasksList.innerHTML = `
             <div class="welcome-message">
-              <h3>Velkommen til Claude Editor</h3>
+              <h3>Velkommen til Sunkez Claude Editor</h3>
               <p>Vælg et projekt og klik "START CLAUDE" for at begynde.<br>Klik "+ Ny opgave" for at starte en opgave - alle kommandoer grupperes under den aktive opgave.</p>
             </div>
           `;
@@ -2129,7 +2124,7 @@
 
       tasksList.innerHTML = tasks.map(task => `
         <div class="task-item ${task.status === 'running' ? 'active' : ''} ${task.id === activeTaskId ? 'expanded' : ''} ${task.status}" data-id="${task.id}">
-          <div class="task-header" onclick="toggleTask(${task.id})">
+          <div class="task-header" data-action="toggle" data-task-id="${task.id}">
             <svg class="task-toggle" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="9 18 15 12 9 6"></polyline>
             </svg>
@@ -2137,7 +2132,7 @@
             <span class="task-prompt">${escapeHtml(task.name)}</span>
             <span class="task-status ${task.status}">
               ${task.status === 'running'
-                ? `<span id="timer-${task.id}">${task.timerSeconds || 0}s</span> KØRER${task.id === activeTaskId ? ' (AKTIV)' : ''} <button class="task-stop-btn" onclick="event.stopPropagation(); stopTask(${task.id})">⬛ STOP</button>`
+                ? `<span id="timer-${task.id}">${task.timerSeconds || 0}s</span> KØRER${task.id === activeTaskId ? ' (AKTIV)' : ''} <button class="task-stop-btn" data-action="stop" data-task-id="${task.id}">⬛ STOP</button>`
                 : `<span class="task-complete-badge">✓ FÆRDIG</span>`}
             </span>
           </div>
@@ -2167,26 +2162,34 @@
       }
     }
 
-    window.toggleTask = function(taskId) {
-      const taskEl = tasksList.querySelector(`[data-id="${taskId}"]`);
-      if (taskEl) {
-        taskEl.classList.toggle('expanded');
-      }
-    };
+    // Event delegation for task list (avoids global functions)
+    tasksList.addEventListener('click', (e) => {
+      const target = e.target.closest('[data-action]');
+      if (!target) return;
 
-    window.stopTask = function(taskId) {
-      // Send stop command to server
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'stop-current-command' }));
+      const action = target.dataset.action;
+      const taskId = parseInt(target.dataset.taskId, 10);
+
+      if (action === 'toggle') {
+        const taskEl = tasksList.querySelector(`[data-id="${taskId}"]`);
+        if (taskEl) {
+          taskEl.classList.toggle('expanded');
+        }
+      } else if (action === 'stop') {
+        e.stopPropagation();
+        // Send stop command to server
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'stop-current-command' }));
+        }
+        // Mark task as completed
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+          task.status = 'completed';
+          stopTaskTimer(taskId);
+          renderTasks();
+        }
       }
-      // Mark task as completed
-      const task = tasks.find(t => t.id === taskId);
-      if (task) {
-        task.status = 'completed';
-        stopTaskTimer(taskId);
-        renderTasks();
-      }
-    };
+    });
 
     function escapeHtml(text) {
       const div = document.createElement('div');
@@ -2431,7 +2434,7 @@
     }
 
     // Task timer functions (replaces blocking overlay)
-    const taskTimers = {}; // Map of taskId -> {interval, startTime}
+    const taskTimers = {}; // Map of taskId -> interval
 
     function startTaskTimer(taskId) {
       // Clear any existing timer for this task
@@ -2443,9 +2446,9 @@
         task.timerSeconds = 0;
 
         taskTimers[taskId] = setInterval(() => {
-          const task = tasks.find(t => t.id === taskId);
-          if (task) {
-            task.timerSeconds = Math.floor((Date.now() - task.timerStartTime) / 1000);
+          const currentTask = tasks.find(t => t.id === taskId);
+          if (currentTask) {
+            currentTask.timerSeconds = Math.floor((Date.now() - currentTask.timerStartTime) / 1000);
             updateTaskTimerDisplay(taskId);
           }
         }, 1000);
@@ -2461,6 +2464,13 @@
       }
     }
 
+    function stopAllTaskTimers() {
+      Object.keys(taskTimers).forEach(taskId => {
+        clearInterval(taskTimers[taskId]);
+        delete taskTimers[taskId];
+      });
+    }
+
     function updateTaskTimerDisplay(taskId) {
       const timerEl = document.getElementById(`timer-${taskId}`);
       const task = tasks.find(t => t.id === taskId);
@@ -2469,14 +2479,8 @@
       }
     }
 
-    // Legacy overlay functions (kept for compatibility but not used)
-    function showWorkingOverlay(command) {
-      // No longer blocks - timer is shown in task list
-    }
-
-    function hideWorkingOverlay() {
-      // No longer needed
-    }
+    // Cleanup timers on page unload to prevent memory leaks
+    window.addEventListener('beforeunload', stopAllTaskTimers);
 
     // Event listeners
     projectSelect.addEventListener('change', (e) => {
@@ -2556,22 +2560,29 @@
       }
     });
 
+    // Helper function for safe WebSocket send
+    function wsSend(data) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(data));
+        return true;
+      }
+      return false;
+    }
+
     startClaudeBtn.addEventListener('click', () => {
-      if (selectedProject && ws) {
-        ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
+      if (selectedProject) {
+        wsSend({ type: 'start-claude', project: selectedProject });
       }
     });
 
     stopClaudeBtn.addEventListener('click', () => {
-      if (ws) {
-        ws.send(JSON.stringify({ type: 'stop-claude' }));
-      }
+      wsSend({ type: 'stop-claude' });
     });
 
     // Click netlify status to stop if running
     netlifyStatusEl.addEventListener('click', () => {
-      if (netlifyRunning && ws) {
-        ws.send(JSON.stringify({ type: 'stop-netlify' }));
+      if (netlifyRunning) {
+        wsSend({ type: 'stop-netlify' });
       }
     });
 
@@ -2650,9 +2661,9 @@
 
         if (file.isImage) {
           fileEl.innerHTML = `
-            <img src="${file.data}" alt="${file.name}">
-            <span>${file.name}</span>
-            <button class="remove-file" onclick="removeFile(${index})">
+            <img src="${escapeHtml(file.data)}" alt="${escapeHtml(file.name)}">
+            <span>${escapeHtml(file.name)}</span>
+            <button class="remove-file" data-action="remove-file" data-index="${index}">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -2662,8 +2673,8 @@
         } else {
           fileEl.innerHTML = `
             <span class="file-icon">📄</span>
-            <span>${file.name}</span>
-            <button class="remove-file" onclick="removeFile(${index})">
+            <span>${escapeHtml(file.name)}</span>
+            <button class="remove-file" data-action="remove-file" data-index="${index}">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -2676,10 +2687,15 @@
       });
     }
 
-    window.removeFile = function(index) {
-      attachedFiles.splice(index, 1);
-      renderAttachedFiles();
-    };
+    // Event delegation for attached files
+    attachedFilesContainer.addEventListener('click', (e) => {
+      const target = e.target.closest('[data-action="remove-file"]');
+      if (target) {
+        const index = parseInt(target.dataset.index, 10);
+        attachedFiles.splice(index, 1);
+        renderAttachedFiles();
+      }
+    });
 
     // Auto-resize textarea
     commandInput.addEventListener('input', () => {
@@ -2689,8 +2705,9 @@
 
     function sendCommand() {
       const command = commandInput.value.trim();
-      console.log('sendCommand called:', { command, wsReady: ws?.readyState === WebSocket.OPEN, claudeRunning, activeTaskId });
-      if ((command || attachedFiles.length > 0) && ws && claudeRunning) {
+      const wsReady = ws && ws.readyState === WebSocket.OPEN;
+      console.log('sendCommand called:', { command, wsReady, claudeRunning, activeTaskId });
+      if ((command || attachedFiles.length > 0) && wsReady && claudeRunning) {
         // Check if there's an active task, if not prompt to create one
         if (!activeTaskId) {
           const taskName = prompt('Giv opgaven et navn:', command.substring(0, 50) + '...');

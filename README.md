@@ -1,4 +1,4 @@
-# Claude Editor
+# Sunkez Claude Editor
 
 A web-based visual editor for Claude CLI with live preview capabilities.
 
@@ -12,7 +12,7 @@ A web-based visual editor for Claude CLI with live preview capabilities.
 
 ## Screenshot
 
-![Claude Editor](screenshot.png)
+![Sunkez Claude Editor](screenshot.png)
 
 The editor has a 3-column layout:
 1. **Left**: Project selector and task list with completion badges
@@ -23,8 +23,8 @@ The editor has a 3-column layout:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Teambattle1/claude-editor.git
-cd claude-editor
+git clone https://github.com/Teambattle1/sunkez-claude-editor.git
+cd sunkez-claude-editor
 
 # Install dependencies
 npm install
