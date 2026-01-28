@@ -4,6 +4,7 @@ const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const chokidar = require('chokidar');
 // const pty = require('node-pty'); // Disabled - posix_spawnp issues on macOS
 
 const app = express();
@@ -21,6 +22,7 @@ let currentProject = null;
 let claudeReady = false;
 let activeVitePort = null;
 let activeNetlifyPort = null;
+let fileWatcher = null;
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
@@ -89,11 +91,98 @@ wss.on('connection', (ws) => {
   });
 });
 
+// File watcher for auto-refresh
+function startFileWatcher(project) {
+  if (fileWatcher) {
+    fileWatcher.close();
+    fileWatcher = null;
+  }
+
+  const projectPath = path.join(GITHUB_PATH, project);
+
+  // Watch for file changes, ignore node_modules, .git, etc.
+  fileWatcher = chokidar.watch(projectPath, {
+    ignored: [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/.cache/**',
+      '**/.netlify/**',
+      '**/coverage/**',
+      '**/*.log'
+    ],
+    ignoreInitial: true,
+    persistent: true
+  });
+
+  // Debounce file changes to avoid too many refreshes
+  let debounceTimer = null;
+
+  fileWatcher.on('all', (event, filePath) => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+
+    debounceTimer = setTimeout(() => {
+      const relativePath = path.relative(projectPath, filePath);
+      console.log(`File ${event}: ${relativePath}`);
+
+      // Notify all connected clients
+      wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            type: 'file-changed',
+            event: event,
+            file: relativePath
+          }));
+        }
+      });
+    }, 300); // 300ms debounce
+  });
+
+  console.log(`File watcher started for ${project}`);
+}
+
+function stopFileWatcher() {
+  if (fileWatcher) {
+    fileWatcher.close();
+    fileWatcher = null;
+    console.log('File watcher stopped');
+  }
+}
+
+// Clean up temp files older than 1 hour
+function cleanupTempFiles(projectPath) {
+  const tempDir = path.join(projectPath, '.claude-temp');
+  if (!fs.existsSync(tempDir)) return;
+
+  const oneHourAgo = Date.now() - (60 * 60 * 1000);
+
+  try {
+    const files = fs.readdirSync(tempDir);
+    for (const file of files) {
+      if (file === '.gitignore') continue;
+      const filePath = path.join(tempDir, file);
+      const stats = fs.statSync(filePath);
+      if (stats.mtimeMs < oneHourAgo) {
+        fs.unlinkSync(filePath);
+        console.log('Cleaned up temp file:', file);
+      }
+    }
+  } catch (e) {
+    console.log('Temp cleanup error:', e.message);
+  }
+}
+
 function startClaude(project, ws) {
   currentProject = project;
   claudeReady = true;
 
   const projectPath = path.join(GITHUB_PATH, project);
+
+  // Clean up old temp files when starting a new session
+  cleanupTempFiles(projectPath);
 
   ws.send(JSON.stringify({ type: 'claude-output', data: `\n🚀 Claude er klar til projekt: ${project}\n` }));
   ws.send(JSON.stringify({ type: 'claude-output', data: `📁 Arbejdsmappe: ${projectPath}\n\n` }));
@@ -113,18 +202,57 @@ async function sendCommand(command, files, ws) {
   }
 
   const projectPath = path.join(GITHUB_PATH, currentProject);
+  const tempDir = path.join(projectPath, '.claude-temp');
 
-  // Note: File attachments are not supported in Claude CLI -p mode
-  // Show warning if files were attached
+  // Build the full prompt with file contents
+  let fullPrompt = command;
+
   if (files && files.length > 0) {
-    ws.send(JSON.stringify({ type: 'claude-output', data: `⚠️ Fil-vedhæftninger understøttes ikke i CLI-mode. Filerne ignoreres.\n` }));
+    const textFiles = files.filter(f => !f.isImage);
+    const imageFiles = files.filter(f => f.isImage);
+
+    // Add text file contents to the prompt
+    if (textFiles.length > 0) {
+      fullPrompt += '\n\n--- Vedhæftede tekstfiler ---\n';
+      for (const file of textFiles) {
+        fullPrompt += `\n### ${file.name}\n\`\`\`\n${file.data}\n\`\`\`\n`;
+      }
+      ws.send(JSON.stringify({ type: 'claude-output', data: `📎 ${textFiles.length} tekstfil(er) inkluderet i prompt\n` }));
+    }
+
+    // Save images to temp folder and include paths in prompt
+    if (imageFiles.length > 0) {
+      // Create temp directory if it doesn't exist
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+        // Add .gitignore to prevent committing temp files
+        fs.writeFileSync(path.join(tempDir, '.gitignore'), '*\n');
+      }
+
+      fullPrompt += '\n\n--- Vedhæftede billeder ---\n';
+      fullPrompt += 'Brug dit Read tool til at se disse billeder:\n';
+
+      for (const file of imageFiles) {
+        // Extract base64 data and save to file
+        const base64Data = file.data.replace(/^data:image\/\w+;base64,/, '');
+        const buffer = Buffer.from(base64Data, 'base64');
+        const fileName = `${Date.now()}-${file.name}`;
+        const filePath = path.join(tempDir, fileName);
+        const absolutePath = path.resolve(filePath);
+
+        fs.writeFileSync(filePath, buffer);
+        fullPrompt += `- ${file.name}: ${absolutePath}\n`;
+      }
+
+      ws.send(JSON.stringify({ type: 'claude-output', data: `🖼️ ${imageFiles.length} billede(r) gemt i .claude-temp/ - Claude kan læse dem\n` }));
+    }
   }
 
   ws.send(JSON.stringify({ type: 'claude-output', data: `\n💬 > ${command}\n\n` }));
 
   // Build arguments array - use stream-json for real-time output without TTY
   // --verbose is required when using stream-json with -p
-  const args = ['-p', command, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
+  const args = ['-p', fullPrompt, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
 
 
   console.log('Starting Claude with args:', args);
@@ -242,9 +370,93 @@ async function killProcessOnPort(port) {
   });
 }
 
+// Detect port from dev server output and send to client
+function detectAndSendPort(output, ws) {
+  // Skip "waiting for" messages - they mention ports but aren't ready yet
+  if (output.toLowerCase().includes('waiting for')) {
+    return;
+  }
+
+  // Patterns to match (in priority order):
+  // - "➜ Local: http://localhost:5173/" (Vite ready)
+  // - "Server now ready on http://localhost:8888" (Netlify ready)
+  // - "✔ Vite dev server ready on port 5173" (Netlify confirms Vite)
+  // - "listening on port 3000" / "listening to 3999"
+  // - Generic "localhost:PORT" as fallback
+
+  const patterns = [
+    { regex: /(?:Local|Network):\s*https?:\/\/localhost:(\d+)/i, type: 'vite-ready' },
+    { regex: /Server now ready.*localhost:(\d+)/i, type: 'netlify-ready' },
+    { regex: /✔.*ready on port (\d+)/i, type: 'confirmed-ready' },
+    { regex: /listening (?:on|to) (?:port )?(\d+)/i, type: 'listening' },
+    { regex: /localhost:(\d+)/i, type: 'generic' }
+  ];
+
+  for (const { regex, type } of patterns) {
+    const match = output.match(regex);
+    if (match) {
+      const port = match[1];
+      const portNum = parseInt(port);
+
+      // Skip if this is just a random port mention (too low or too high)
+      if (portNum < 3000 || portNum > 9999) continue;
+
+      console.log('Detected port:', port, 'type:', type, 'from output:', output.substring(0, 50));
+
+      // Determine if this is a Netlify proxy port or a dev server port
+      if (port === '8888') {
+        // Always update Netlify port and send URL
+        activeNetlifyPort = port;
+        console.log('Sending Netlify preview-url:', port);
+        ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${port}` }));
+      } else {
+        // Only set Vite port if not already set, or if this is a confirmed ready message
+        if (!activeVitePort || type === 'vite-ready' || type === 'confirmed-ready') {
+          activeVitePort = port;
+          console.log('Sending Vite preview-url:', port);
+          ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${port}` }));
+        }
+      }
+      break; // Only process the first matching pattern
+    }
+  }
+}
+
+// Detect project type and return the appropriate dev command
+function detectDevCommand(projectPath) {
+  const hasNetlifyToml = fs.existsSync(path.join(projectPath, 'netlify.toml'));
+  const hasViteConfig = fs.existsSync(path.join(projectPath, 'vite.config.js')) ||
+                        fs.existsSync(path.join(projectPath, 'vite.config.ts')) ||
+                        fs.existsSync(path.join(projectPath, 'vite.config.mjs'));
+  const hasPackageJson = fs.existsSync(path.join(projectPath, 'package.json'));
+
+  let packageJson = null;
+  if (hasPackageJson) {
+    try {
+      packageJson = JSON.parse(fs.readFileSync(path.join(projectPath, 'package.json'), 'utf8'));
+    } catch (e) {}
+  }
+
+  const hasDevScript = packageJson?.scripts?.dev;
+  const hasStartScript = packageJson?.scripts?.start;
+
+  // Priority: netlify.toml > vite config > package.json dev script
+  if (hasNetlifyToml) {
+    return { cmd: 'netlify', args: ['dev', '--no-open'], type: 'netlify' };
+  } else if (hasViteConfig) {
+    return { cmd: 'npx', args: ['vite', '--host'], type: 'vite' };
+  } else if (hasDevScript) {
+    return { cmd: 'npm', args: ['run', 'dev'], type: 'npm-dev' };
+  } else if (hasStartScript) {
+    return { cmd: 'npm', args: ['run', 'start'], type: 'npm-start' };
+  }
+
+  return null;
+}
+
 async function startNetlify(project, ws) {
   if (netlifyProcess) {
-    ws.send(JSON.stringify({ type: 'netlify-output', data: '\n⚠️ Stopper eksisterende Netlify session...\n' }));
+    ws.send(JSON.stringify({ type: 'netlify-output', data: '\n⚠️ Stopper eksisterende dev server...\n' }));
     netlifyProcess.kill('SIGTERM');
     netlifyProcess = null;
     await new Promise(r => setTimeout(r, 1000));
@@ -263,6 +475,15 @@ async function startNetlify(project, ws) {
   }
 
   const projectPath = path.join(GITHUB_PATH, project);
+
+  // Detect what type of project this is
+  const devCommand = detectDevCommand(projectPath);
+
+  if (!devCommand) {
+    ws.send(JSON.stringify({ type: 'netlify-output', data: '⚠️ Kunne ikke finde dev kommando (ingen netlify.toml, vite.config, eller package.json scripts)\n' }));
+    ws.send(JSON.stringify({ type: 'netlify-output', data: '💡 Prøv at åbne projektet manuelt med: cd ' + projectPath + ' && npm run dev\n' }));
+    return;
+  }
 
   // Check if node_modules exists, if not install dependencies
   const nodeModulesPath = path.join(projectPath, 'node_modules');
@@ -311,9 +532,17 @@ async function startNetlify(project, ws) {
     }
   }
 
-  ws.send(JSON.stringify({ type: 'netlify-output', data: `\n🌐 Starter Netlify Dev i ${project}...\n\n` }));
+  const typeLabels = {
+    'netlify': '🌐 Netlify Dev',
+    'vite': '⚡ Vite Dev Server',
+    'npm-dev': '📦 npm run dev',
+    'npm-start': '📦 npm start'
+  };
 
-  netlifyProcess = spawn('netlify', ['dev', '--no-open'], {
+  ws.send(JSON.stringify({ type: 'netlify-output', data: `\n${typeLabels[devCommand.type]} starter i ${project}...\n` }));
+  ws.send(JSON.stringify({ type: 'netlify-output', data: `Kommando: ${devCommand.cmd} ${devCommand.args.join(' ')}\n\n` }));
+
+  netlifyProcess = spawn(devCommand.cmd, devCommand.args, {
     cwd: projectPath,
     env: { ...process.env, FORCE_COLOR: '1', BROWSER: 'none' },
     shell: true
@@ -321,71 +550,43 @@ async function startNetlify(project, ws) {
 
   netlifyProcess.stdout.on('data', (data) => {
     const output = data.toString();
-    console.log('Netlify stdout:', output.substring(0, 100));
+    console.log('Dev server stdout:', output.substring(0, 100));
     ws.send(JSON.stringify({ type: 'netlify-output', data: output }));
 
-    // Check for server ready message
-    if (output.includes('Server now ready') || output.includes('localhost:')) {
-      const portMatch = output.match(/localhost:(\d+)/);
-      if (portMatch) {
-        const port = portMatch[1];
-        console.log('Sending preview-url:', port);
-
-        // Store the port for reconnecting clients
-        if (port === '8888') {
-          activeNetlifyPort = port;
-        } else {
-          activeVitePort = port;
-        }
-
-        ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${port}` }));
-      }
-    }
-
-    // Also check for "server ready on port X" pattern (for Vite/dev servers)
-    // Must include "server" to avoid matching "Waiting for...ready on port"
-    const portReadyMatch = output.match(/server ready on port (\d+)/i);
-    if (portReadyMatch) {
-      const port = portReadyMatch[1];
-      if (port !== '8888' && !activeVitePort) {
-        activeVitePort = port;
-        console.log('Sending preview-url (from ready pattern):', port);
-        ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${port}` }));
-      }
-    }
+    // Detect ports from various patterns
+    detectAndSendPort(output, ws);
   });
 
   netlifyProcess.stderr.on('data', (data) => {
     const output = data.toString();
-    console.log('Netlify stderr:', output.substring(0, 100));
+    console.log('Dev server stderr:', output.substring(0, 100));
     ws.send(JSON.stringify({ type: 'netlify-output', data: output }));
 
-    // Check stderr for "server ready on port X" pattern (must include "server" or "✔")
-    const portReadyMatch = output.match(/(?:server ready|✔.*ready) on port (\d+)/i);
-    if (portReadyMatch) {
-      const port = portReadyMatch[1];
-      if (port !== '8888' && !activeVitePort) {
-        activeVitePort = port;
-        console.log('Sending preview-url (from stderr):', port);
-        ws.send(JSON.stringify({ type: 'preview-url', url: `http://localhost:${port}` }));
-      }
-    }
+    // Detect ports from various patterns
+    detectAndSendPort(output, ws);
   });
 
   netlifyProcess.on('error', (err) => {
-    console.log('Netlify process error:', err.message);
+    console.log('Dev server process error:', err.message);
+    ws.send(JSON.stringify({ type: 'netlify-output', data: `\n❌ Dev server fejl: ${err.message}\n` }));
   });
 
   netlifyProcess.on('close', (code) => {
-    ws.send(JSON.stringify({ type: 'netlify-output', data: `\n\n📋 Netlify dev afsluttet med kode ${code}\n` }));
+    ws.send(JSON.stringify({ type: 'netlify-output', data: `\n\n📋 Dev server afsluttet med kode ${code}\n` }));
     ws.send(JSON.stringify({ type: 'netlify-stopped' }));
     netlifyProcess = null;
+    activeVitePort = null;
+    activeNetlifyPort = null;
   });
 
   ws.send(JSON.stringify({ type: 'netlify-started' }));
+
+  // Start file watcher for auto-refresh
+  startFileWatcher(project);
 }
 
 function stopNetlify(ws) {
+  stopFileWatcher();
   if (netlifyProcess) {
     netlifyProcess.kill('SIGTERM');
     netlifyProcess = null;

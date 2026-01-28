@@ -1420,6 +1420,14 @@
         </select>
       </div>
 
+      <button id="refreshProjectBtn" class="btn btn-secondary" title="Genindlæs projekt" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 4v6h-6"></path>
+          <path d="M1 20v-6h6"></path>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+      </button>
+
       <button id="startClaudeBtn" class="btn btn-primary" disabled>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -1690,6 +1698,7 @@
   <script>
     // Elements
     const projectSelect = document.getElementById('projectSelect');
+    const refreshProjectBtn = document.getElementById('refreshProjectBtn');
     const startClaudeBtn = document.getElementById('startClaudeBtn');
     const stopClaudeBtn = document.getElementById('stopClaudeBtn');
     const netlifyStatusEl = document.getElementById('netlifyStatus');
@@ -1999,6 +2008,13 @@
           }
           showPreview(data.url);
           break;
+        case 'file-changed':
+          // Auto-refresh preview when files change
+          if (autoRefreshEnabled && previewFrame.src) {
+            console.log(`File changed: ${data.file} (${data.event})`);
+            previewFrame.src = previewFrame.src;
+          }
+          break;
       }
     }
 
@@ -2078,9 +2094,19 @@
     function updatePreviewUrl() {
       let port;
       if (currentPreviewMode === 'netlify') {
-        port = netlifyPort || '8888';
+        port = netlifyPort;
       } else {
-        port = vitePort || '5173';
+        port = vitePort;
+      }
+
+      console.log('Preview mode:', currentPreviewMode, 'Port:', port, 'vitePort:', vitePort, 'netlifyPort:', netlifyPort);
+
+      // Only show preview if we have a detected port
+      if (!port) {
+        previewPlaceholder.style.display = 'flex';
+        previewFrameContainer.style.display = 'none';
+        urlBar.value = 'Venter på server...';
+        return;
       }
 
       const url = `http://localhost:${port}`;
@@ -2098,8 +2124,6 @@
       if (netlifyPortEl) {
         netlifyPortEl.textContent = `localhost:${port}`;
       }
-
-      console.log('Preview mode:', currentPreviewMode, 'Port:', port, 'vitePort:', vitePort, 'netlifyPort:', netlifyPort);
     }
 
     function renderTasks() {
@@ -2223,11 +2247,15 @@
           netlifyPort = port;
           signalNetlifyReady();
           showPreview(`http://localhost:${port}`);
-        } else if (portNum >= 5173 && portNum <= 5200 || port === '3000' || port === '3001' || port === '8080' || port === '8081') {
-          // Vite typically uses ports 5173-5200, also 3000/3001, 8080/8081
+        } else if (
+          (portNum >= 5173 && portNum <= 5200) || // Vite default range
+          (portNum >= 3000 && portNum <= 3999) || // Common dev server ports including static server
+          port === '8080' || port === '8081'      // Alternative dev ports
+        ) {
+          // Dev server ports (Vite, static server, etc.)
           vitePort = port;
           signalViteReady();
-          console.log('Detected Vite port:', port);
+          console.log('Detected dev server port:', port);
         }
       }
       // Check for "Server now ready on" pattern
@@ -2486,6 +2514,7 @@
     projectSelect.addEventListener('change', (e) => {
       selectedProject = e.target.value;
       startClaudeBtn.disabled = !selectedProject;
+      refreshProjectBtn.disabled = !selectedProject;
 
       // Load credentials for this project
       if (selectedProject) {
@@ -2577,6 +2606,36 @@
 
     stopClaudeBtn.addEventListener('click', () => {
       wsSend({ type: 'stop-claude' });
+    });
+
+    // Refresh project button - reloads the current project
+    refreshProjectBtn.addEventListener('click', () => {
+      if (!selectedProject) return;
+
+      // Reset ports and tasks
+      vitePort = null;
+      netlifyPort = null;
+      tasks = [];
+      activeTaskId = null;
+      currentTaskId = null;
+      renderTasks();
+
+      showProjectLoading(selectedProject, () => {
+        updatePreviewUrl();
+      });
+
+      // Restart services
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop-claude' }));
+        ws.send(JSON.stringify({ type: 'stop-netlify' }));
+
+        setTimeout(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'start-claude', project: selectedProject }));
+            ws.send(JSON.stringify({ type: 'start-netlify', project: selectedProject }));
+          }
+        }, 500);
+      }
     });
 
     // Click netlify status to stop if running
