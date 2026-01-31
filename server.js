@@ -3,17 +3,47 @@ const http = require('http');
 const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, exec, execSync } = require('child_process');
 const chokidar = require('chokidar');
-// const pty = require('node-pty'); // Disabled - posix_spawnp issues on macOS
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const GITHUB_PATH = '/Users/thomas/GITHUB';
 const PORT = 3333;
-const CLAUDE_PATH = '/Users/thomas/.local/bin/claude';
+const isWindows = process.platform === 'win32';
+const CONFIG_FILE = path.join(__dirname, 'config.json');
+
+// Load or create config
+function loadConfig() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      // Ensure projectPorts exists
+      if (!cfg.projectPorts) {
+        cfg.projectPorts = {};
+      }
+      return cfg;
+    }
+  } catch (e) {
+    console.log('Could not load config:', e.message);
+  }
+  return { projectsPath: null, projectPorts: {} };
+}
+
+function saveConfig(config) {
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+let config = loadConfig();
+
+// Get projects path from config
+function getProjectsPath() {
+  return config.projectsPath;
+}
+
+// Claude CLI path (assumes it's in PATH on both platforms)
+const CLAUDE_PATH = 'claude';
 
 // Multi-project state management
 const projects = new Map(); // projectName -> { process, vitePort, netlifyPort, fileWatcher, claudeReady, claudeProcess, commandQueue }
@@ -35,30 +65,185 @@ function getProjectState(projectName) {
   return projects.get(projectName);
 }
 
-// Find next available port starting from base
+// Cross-platform: Find next available port
 async function findAvailablePort(basePort) {
-  const { execSync } = require('child_process');
+  const net = require('net');
   for (let port = basePort; port < basePort + 100; port++) {
-    try {
-      execSync(`lsof -ti :${port} 2>/dev/null`);
-      // Port is in use, try next
-    } catch {
-      // Port is free
+    const available = await new Promise(resolve => {
+      const server = net.createServer();
+      server.once('error', () => resolve(false));
+      server.once('listening', () => {
+        server.close();
+        resolve(true);
+      });
+      server.listen(port);
+    });
+    if (available) return port;
+  }
+  return basePort;
+}
+
+// Get or assign a fixed port for a project
+async function getOrAssignProjectPort(projectName) {
+  // Check if project already has a fixed port
+  if (config.projectPorts[projectName]) {
+    const assignedPort = config.projectPorts[projectName];
+    console.log(`Project ${projectName} has fixed port: ${assignedPort}`);
+    return assignedPort;
+  }
+
+  // Find all already assigned ports
+  const usedPorts = new Set(Object.values(config.projectPorts));
+
+  // Find next available port starting from 5173, skipping already assigned ones
+  const net = require('net');
+  for (let port = 5173; port < 5273; port++) {
+    // Skip if already assigned to another project
+    if (usedPorts.has(port)) continue;
+
+    // Check if port is actually available
+    const available = await new Promise(resolve => {
+      const server = net.createServer();
+      server.once('error', () => resolve(false));
+      server.once('listening', () => {
+        server.close();
+        resolve(true);
+      });
+      server.listen(port);
+    });
+
+    if (available) {
+      // Assign this port permanently to the project
+      config.projectPorts[projectName] = port;
+      saveConfig(config);
+      console.log(`Assigned fixed port ${port} to project ${projectName}`);
       return port;
     }
   }
-  return basePort; // Fallback
+
+  // Fallback if no port found
+  const fallbackPort = 5173 + Object.keys(config.projectPorts).length;
+  config.projectPorts[projectName] = fallbackPort;
+  saveConfig(config);
+  return fallbackPort;
+}
+
+// Cross-platform: Kill process by PID
+function killProcess(pid) {
+  try {
+    if (isWindows) {
+      execSync(`taskkill /PID ${pid} /F /T`, { stdio: 'ignore' });
+    } else {
+      process.kill(pid, 'SIGTERM');
+    }
+  } catch (e) {
+    // Process may already be dead
+  }
+}
+
+// Cross-platform: Check if process is running
+function isProcessRunning(pid) {
+  try {
+    if (isWindows) {
+      const result = execSync(`tasklist /FI "PID eq ${pid}" /NH`, { encoding: 'utf8' });
+      return result.includes(pid.toString());
+    } else {
+      process.kill(pid, 0);
+      return true;
+    }
+  } catch (e) {
+    return false;
+  }
 }
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// Get list of projects
-app.get('/api/projects', (req, res) => {
+// Get config
+app.get('/api/config', (req, res) => {
+  res.json({
+    projectsPath: config.projectsPath,
+    isConfigured: !!config.projectsPath,
+    platform: process.platform,
+    projectPorts: config.projectPorts || {}
+  });
+});
+
+// Get assigned port for a specific project
+app.get('/api/project-port/:project', async (req, res) => {
+  const projectName = req.params.project;
+  const port = await getOrAssignProjectPort(projectName);
+  res.json({ project: projectName, port });
+});
+
+// Set projects path
+app.post('/api/config', (req, res) => {
+  const { projectsPath } = req.body;
+
+  if (!projectsPath) {
+    return res.status(400).json({ error: 'projectsPath is required' });
+  }
+
+  // Verify the path exists and is a directory
   try {
-    const items = fs.readdirSync(GITHUB_PATH, { withFileTypes: true });
+    const stats = fs.statSync(projectsPath);
+    if (!stats.isDirectory()) {
+      return res.status(400).json({ error: 'Path is not a directory' });
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'Path does not exist' });
+  }
+
+  config.projectsPath = projectsPath;
+  saveConfig(config);
+  res.json({ success: true, projectsPath });
+});
+
+// Browse directory (for folder picker)
+app.get('/api/browse', (req, res) => {
+  const requestedPath = req.query.path || (isWindows ? 'C:\\' : '/');
+
+  try {
+    const items = fs.readdirSync(requestedPath, { withFileTypes: true });
+    const dirs = items
+      .filter(item => item.isDirectory() && !item.name.startsWith('.'))
+      .map(item => ({
+        name: item.name,
+        path: path.join(requestedPath, item.name)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    res.json({
+      current: requestedPath,
+      parent: path.dirname(requestedPath),
+      directories: dirs
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get list of projects (sorted by most recently modified)
+app.get('/api/projects', (req, res) => {
+  const projectsPath = getProjectsPath();
+
+  if (!projectsPath) {
+    return res.status(400).json({ error: 'Projects path not configured' });
+  }
+
+  try {
+    const items = fs.readdirSync(projectsPath, { withFileTypes: true });
     const projects = items
       .filter(item => item.isDirectory() && !item.name.startsWith('.'))
+      .map(item => {
+        const fullPath = path.join(projectsPath, item.name);
+        let mtime = 0;
+        try {
+          mtime = fs.statSync(fullPath).mtimeMs;
+        } catch (e) {}
+        return { name: item.name, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime) // Sort by most recent first
       .map(item => item.name);
     res.json(projects);
   } catch (error) {
@@ -124,15 +309,31 @@ wss.on('connection', (ws) => {
 // Send current project state to client
 function sendProjectState(projectName, ws) {
   const state = projects.get(projectName);
+  // Get the fixed assigned port from config (if any)
+  const assignedPort = config.projectPorts[projectName] || null;
+
   if (state) {
     ws.send(JSON.stringify({
       type: 'project-state',
       project: projectName,
       claudeReady: state.claudeReady,
       netlifyRunning: !!state.netlifyProcess,
-      vitePort: state.vitePort,
+      vitePort: state.vitePort || assignedPort,
+      assignedPort: assignedPort,
       netlifyPort: state.netlifyPort,
       queueLength: state.commandQueue.length
+    }));
+  } else {
+    // Even if no state exists, send the assigned port info
+    ws.send(JSON.stringify({
+      type: 'project-state',
+      project: projectName,
+      claudeReady: false,
+      netlifyRunning: false,
+      vitePort: assignedPort,
+      assignedPort: assignedPort,
+      netlifyPort: null,
+      queueLength: 0
     }));
   }
 }
@@ -146,7 +347,7 @@ function startFileWatcher(project) {
     state.fileWatcher = null;
   }
 
-  const projectPath = path.join(GITHUB_PATH, project);
+  const projectPath = path.join(getProjectsPath(), project);
 
   // Watch for file changes, ignore node_modules, .git, etc.
   state.fileWatcher = chokidar.watch(projectPath, {
@@ -220,7 +421,7 @@ function startClaude(project, ws) {
   const state = getProjectState(project);
   state.claudeReady = true;
 
-  const projectPath = path.join(GITHUB_PATH, project);
+  const projectPath = path.join(getProjectsPath(), project);
 
   // Clean up old temp files when starting a new session
   cleanupTempFiles(projectPath);
@@ -290,7 +491,7 @@ async function sendCommand(command, files, project, ws, fromQueue = false) {
     return;
   }
 
-  const projectPath = path.join(GITHUB_PATH, project);
+  const projectPath = path.join(getProjectsPath(), project);
   const tempDir = path.join(projectPath, '.claude-temp');
 
   // Build the full prompt with file contents
@@ -339,98 +540,67 @@ async function sendCommand(command, files, project, ws, fromQueue = false) {
 
   ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n💬 > ${command}\n\n` }));
 
-  // Ensure temp directory exists and write prompt to file
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-    fs.writeFileSync(path.join(tempDir, '.gitignore'), '*\n');
-  }
-  const tempPromptFile = path.join(tempDir, 'prompt.txt');
-  fs.writeFileSync(tempPromptFile, fullPrompt);
-
-  // Use shell script to run Claude and capture output
-  const outputFile = path.join(tempDir, `output-${Date.now()}.jsonl`);
-  const scriptContent = `#!/bin/bash
-cd "${projectPath}"
-"${CLAUDE_PATH}" -p "$(cat "${tempPromptFile}")" --dangerously-skip-permissions --output-format stream-json --verbose > "${outputFile}" 2>&1 &
-echo $!
-`;
-  const scriptFile = path.join(tempDir, 'run-claude.sh');
-  fs.writeFileSync(scriptFile, scriptContent);
-  fs.chmodSync(scriptFile, '755');
-
   console.log('Starting Claude in:', projectPath);
   ws.send(JSON.stringify({ type: 'claude-output', project, data: '⏳ Claude starter...\n' }));
 
-  // Run the script to get PID
-  const { execSync } = require('child_process');
-  let claudePid;
-  try {
-    claudePid = execSync(`bash "${scriptFile}"`, { encoding: 'utf8' }).trim();
-    console.log('Claude process PID:', claudePid);
-  } catch (err) {
-    ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n❌ Kunne ikke starte Claude: ${err.message}\n` }));
+  // Spawn Claude process directly (cross-platform)
+  const claudeArgs = ['-p', fullPrompt, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
+
+  const claudeProcess = spawn(CLAUDE_PATH, claudeArgs, {
+    cwd: projectPath,
+    shell: true,
+    env: { ...process.env }
+  });
+
+  if (!claudeProcess.pid) {
+    ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n❌ Kunne ikke starte Claude\n` }));
     return;
   }
 
-  ws.send(JSON.stringify({ type: 'claude-output', project, data: `⏳ Claude arbejder (PID: ${claudePid})...\n` }));
+  ws.send(JSON.stringify({ type: 'claude-output', project, data: `⏳ Claude arbejder (PID: ${claudeProcess.pid})...\n` }));
 
-  // Poll output file for new content
-  let lastSize = 0;
   let buffer = '';
   let checkCount = 0;
   const maxChecks = 600; // 10 minutes max
 
-  const pollInterval = setInterval(() => {
+  // Handle stdout
+  claudeProcess.stdout.on('data', (data) => {
+    buffer = processClaudeOutput(data.toString(), project, ws, buffer);
+  });
+
+  // Handle stderr
+  claudeProcess.stderr.on('data', (data) => {
+    buffer = processClaudeOutput(data.toString(), project, ws, buffer);
+  });
+
+  // Handle process exit
+  claudeProcess.on('close', (code) => {
+    if (state.claudeProcess?.interval) {
+      clearInterval(state.claudeProcess.interval);
+    }
+    ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n\n✅ Kommando færdig (kode: ${code}).\n` }));
+    state.claudeProcess = null;
+    processNextInQueue(project, ws);
+  });
+
+  claudeProcess.on('error', (err) => {
+    ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n❌ Fejl: ${err.message}\n` }));
+    state.claudeProcess = null;
+  });
+
+  // Timeout check
+  const timeoutInterval = setInterval(() => {
     checkCount++;
-
-    // Check if process is still running
-    try {
-      execSync(`kill -0 ${claudePid} 2>/dev/null`);
-    } catch {
-      // Process ended
-      clearInterval(pollInterval);
-
-      // Read remaining output
-      if (fs.existsSync(outputFile)) {
-        const finalContent = fs.readFileSync(outputFile, 'utf8');
-        processClaudeOutput(finalContent.slice(lastSize), project, ws, buffer);
-        try { fs.unlinkSync(outputFile); } catch {}
-      }
-      try { fs.unlinkSync(tempPromptFile); } catch {}
-      try { fs.unlinkSync(scriptFile); } catch {}
-
-      ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n\n✅ Kommando færdig.\n` }));
-      state.claudeProcess = null;
-
-      // Process next command in queue
-      processNextInQueue(project, ws);
-      return;
-    }
-
-    // Read new content from output file
-    if (fs.existsSync(outputFile)) {
-      const stats = fs.statSync(outputFile);
-      if (stats.size > lastSize) {
-        const fd = fs.openSync(outputFile, 'r');
-        const newContent = Buffer.alloc(stats.size - lastSize);
-        fs.readSync(fd, newContent, 0, stats.size - lastSize, lastSize);
-        fs.closeSync(fd);
-        lastSize = stats.size;
-
-        buffer = processClaudeOutput(newContent.toString(), project, ws, buffer);
-      }
-    }
-
     if (checkCount >= maxChecks) {
-      clearInterval(pollInterval);
-      try { execSync(`kill ${claudePid}`); } catch {}
+      clearInterval(timeoutInterval);
+      killProcess(claudeProcess.pid);
       ws.send(JSON.stringify({ type: 'claude-output', project, data: `\n\n⏱️ Timeout efter 10 minutter.\n` }));
       state.claudeProcess = null;
     }
   }, 1000);
 
-  // Store interval so we can stop it
-  state.claudeProcess = { pid: claudePid, interval: pollInterval };
+  // Store process so we can stop it
+  state.claudeProcess = { pid: claudeProcess.pid, process: claudeProcess, interval: timeoutInterval };
 }
 
 function processNextInQueue(project, ws) {
@@ -454,7 +624,6 @@ function processNextInQueue(project, ws) {
 
 function stopClaude(project, ws) {
   const state = getProjectState(project);
-  const { execSync } = require('child_process');
 
   if (state.claudeProcess) {
     // Stop the polling interval
@@ -463,7 +632,10 @@ function stopClaude(project, ws) {
     }
     // Kill the Claude process
     if (state.claudeProcess.pid) {
-      try { execSync(`kill ${state.claudeProcess.pid} 2>/dev/null`); } catch {}
+      killProcess(state.claudeProcess.pid);
+    }
+    if (state.claudeProcess.process) {
+      state.claudeProcess.process.kill();
     }
     state.claudeProcess = null;
   }
@@ -482,7 +654,6 @@ function stopClaude(project, ws) {
 
 function stopCurrentCommand(project, ws) {
   const state = getProjectState(project);
-  const { execSync } = require('child_process');
 
   if (state.claudeProcess) {
     // Stop the polling interval
@@ -491,7 +662,10 @@ function stopCurrentCommand(project, ws) {
     }
     // Kill the Claude process
     if (state.claudeProcess.pid) {
-      try { execSync(`kill ${state.claudeProcess.pid} 2>/dev/null`); } catch {}
+      killProcess(state.claudeProcess.pid);
+    }
+    if (state.claudeProcess.process) {
+      state.claudeProcess.process.kill();
     }
     state.claudeProcess = null;
     ws.send(JSON.stringify({ type: 'claude-output', project, data: '\n\n⬛ Kommando stoppet.\n' }));
@@ -499,16 +673,23 @@ function stopCurrentCommand(project, ws) {
 }
 
 async function killProcessOnPort(port) {
-  const { execSync } = require('child_process');
   try {
-    const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' }).trim();
-    if (pids) {
-      const pidList = pids.split('\n').filter(p => p);
-      pidList.forEach(pid => {
-        try {
-          execSync(`kill -9 ${pid} 2>/dev/null`);
-        } catch (e) {}
+    if (isWindows) {
+      // Windows: find and kill process using the port
+      const result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+      const lines = result.split('\n').filter(l => l.includes('LISTENING'));
+      const pids = [...new Set(lines.map(l => l.trim().split(/\s+/).pop()).filter(p => p && p !== '0'))];
+      pids.forEach(pid => {
+        try { execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' }); } catch (e) {}
       });
+    } else {
+      // Unix: use lsof
+      const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf8' }).trim();
+      if (pids) {
+        pids.split('\n').filter(p => p).forEach(pid => {
+          try { process.kill(parseInt(pid), 'SIGKILL'); } catch (e) {}
+        });
+      }
     }
   } catch (e) {
     // Port not in use or command failed - that's fine
@@ -570,6 +751,16 @@ function detectAndSendPort(output, project, ws) {
   }
 }
 
+// Detect package manager from lockfiles
+function detectPackageManager(projectPath) {
+  if (fs.existsSync(path.join(projectPath, 'pnpm-lock.yaml'))) {
+    return 'pnpm';
+  } else if (fs.existsSync(path.join(projectPath, 'yarn.lock'))) {
+    return 'yarn';
+  }
+  return 'npm';
+}
+
 // Detect project type and return the appropriate dev command
 function detectDevCommand(projectPath) {
   const hasNetlifyToml = fs.existsSync(path.join(projectPath, 'netlify.toml'));
@@ -588,21 +779,27 @@ function detectDevCommand(projectPath) {
   const hasDevScript = packageJson?.scripts?.dev;
   const hasStartScript = packageJson?.scripts?.start;
 
-  // Priority: netlify.toml > vite config > package.json dev script
-  if (hasNetlifyToml) {
-    return { cmd: 'netlify', args: ['dev', '--no-open'], type: 'netlify' };
+  // Detect package manager (pnpm, yarn, npm)
+  const pm = detectPackageManager(projectPath);
+  // Use npx for pnpm since it might not be globally installed
+  const pmCmd = pm === 'pnpm' ? 'npx pnpm' : pm;
+
+  // Priority: package.json scripts first (uses project's installed packages)
+  if (hasDevScript) {
+    return { cmd: pmCmd, args: ['run', 'dev'], type: `${pm}-dev` };
   } else if (hasViteConfig) {
     return { cmd: 'npx', args: ['vite', '--host'], type: 'vite' };
-  } else if (hasDevScript) {
-    return { cmd: 'npm', args: ['run', 'dev'], type: 'npm-dev' };
   } else if (hasStartScript) {
-    return { cmd: 'npm', args: ['run', 'start'], type: 'npm-start' };
+    return { cmd: pmCmd, args: ['run', 'start'], type: `${pm}-start` };
+  } else if (hasNetlifyToml) {
+    return { cmd: 'npx', args: ['netlify', 'dev', '--no-open'], type: 'netlify' };
   }
 
   return null;
 }
 
 async function startNetlify(project, ws) {
+  console.log('startNetlify called for:', project);
   const state = getProjectState(project);
 
   // Stop existing process for this project
@@ -615,10 +812,12 @@ async function startNetlify(project, ws) {
     await new Promise(r => setTimeout(r, 1000));
   }
 
-  const projectPath = path.join(GITHUB_PATH, project);
+  const projectPath = path.join(getProjectsPath(), project);
+  console.log('Project path:', projectPath);
 
   // Detect what type of project this is
   const devCommand = detectDevCommand(projectPath);
+  console.log('Dev command:', devCommand);
 
   if (!devCommand) {
     ws.send(JSON.stringify({ type: 'netlify-output', project, data: '⚠️ Kunne ikke finde dev kommando (ingen netlify.toml, vite.config, eller package.json scripts)\n' }));
@@ -628,18 +827,20 @@ async function startNetlify(project, ws) {
 
   // Check if node_modules exists, if not install dependencies
   const nodeModulesPath = path.join(projectPath, 'node_modules');
-  if (!fs.existsSync(nodeModulesPath)) {
+  const hasNodeModules = fs.existsSync(nodeModulesPath);
+  console.log('node_modules path:', nodeModulesPath, 'exists:', hasNodeModules);
+
+  if (!hasNodeModules) {
     ws.send(JSON.stringify({ type: 'netlify-output', project, data: '📦 node_modules mangler - installerer dependencies...\n' }));
 
-    // Check which package manager to use
+    // Check which package manager to use (use npx for pnpm/yarn if not globally installed)
     const hasPnpmLock = fs.existsSync(path.join(projectPath, 'pnpm-lock.yaml'));
     const hasYarnLock = fs.existsSync(path.join(projectPath, 'yarn.lock'));
-    const installCmd = hasPnpmLock ? 'pnpm' : (hasYarnLock ? 'yarn' : 'npm');
+    const installCmd = hasPnpmLock ? 'npx pnpm' : (hasYarnLock ? 'npx yarn' : 'npm');
 
     ws.send(JSON.stringify({ type: 'netlify-output', project, data: `🔧 Kører ${installCmd} install...\n` }));
 
     try {
-      const { exec } = require('child_process');
       await new Promise((resolve, reject) => {
         const installProcess = exec(`${installCmd} install`, {
           cwd: projectPath,
@@ -678,15 +879,42 @@ async function startNetlify(project, ws) {
     'netlify': '🌐 Netlify Dev',
     'vite': '⚡ Vite Dev Server',
     'npm-dev': '📦 npm run dev',
-    'npm-start': '📦 npm start'
+    'npm-start': '📦 npm start',
+    'pnpm-dev': '📦 pnpm run dev',
+    'pnpm-start': '📦 pnpm start',
+    'yarn-dev': '📦 yarn dev',
+    'yarn-start': '📦 yarn start'
   };
 
-  const cmdLine = `${devCommand.cmd} ${devCommand.args.join(' ')}`;
-  ws.send(JSON.stringify({ type: 'netlify-output', project, data: `\n${typeLabels[devCommand.type]} starter i ${project}...\n` }));
-  ws.send(JSON.stringify({ type: 'netlify-output', project, data: `Kommando: ${cmdLine}\n\n` }));
+  // Get or assign a fixed port for this project
+  const assignedPort = await getOrAssignProjectPort(project);
+  state.vitePort = assignedPort;
+  console.log('Using fixed port:', assignedPort, 'for project:', project);
 
-  // Use exec for better compatibility with Node.js v25
-  const { exec } = require('child_process');
+  // Kill any process that might be using this port
+  await killProcessOnPort(assignedPort);
+
+  // Build command with port argument
+  let cmdLine = `${devCommand.cmd} ${devCommand.args.join(' ')}`;
+
+  // Add --port flag for vite/npm dev commands
+  // For npm/pnpm run dev, we need to pass the port to the underlying script
+  if (devCommand.type === 'vite') {
+    // Direct vite command
+    cmdLine += ` --port ${assignedPort}`;
+  } else if (devCommand.type.includes('dev')) {
+    // npm/pnpm/yarn run dev - pass through with --
+    cmdLine += ` -- --port ${assignedPort}`;
+  }
+
+  const label = typeLabels[devCommand.type] || `📦 ${devCommand.type}`;
+  ws.send(JSON.stringify({ type: 'netlify-output', project, data: `\n${label} starter i ${project}...\n` }));
+  ws.send(JSON.stringify({ type: 'netlify-output', project, data: `Kommando: ${cmdLine}\n` }));
+  ws.send(JSON.stringify({ type: 'netlify-output', project, data: `🔌 Port: ${assignedPort}\n\n` }));
+  console.log('Running command:', cmdLine, 'in', projectPath);
+
+  // Send preview URL immediately with assigned port
+  ws.send(JSON.stringify({ type: 'preview-url', project, url: `http://localhost:${assignedPort}` }));
 
   state.netlifyProcess = exec(cmdLine, {
     cwd: projectPath,
