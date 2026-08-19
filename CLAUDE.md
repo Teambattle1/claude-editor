@@ -2,6 +2,44 @@
 
 Guidance for Claude Code when working in this repository.
 
+## Kommunikation i chatten (LÆS FØRST — går forud for alt andet)
+
+Brugeren er UIX-mand, ikke koder, og læser ofte svarene på en telefon. Chatten
+skal derfor kun indeholde: fremdrift (TODO-status), spørgsmål der kræver et
+svar, og en kort ikke-teknisk opsummering til sidst. Alt andet er støj.
+
+- **Klist ALDRIG rå bot- eller webhook-indhold ind i chatten.** Det gælder
+  deploy-bots (Netlify, Vercel), GitHub-event-payloads, CI-logs og API-svar:
+  ingen rå JSON, escaped HTML, skjulte HTML-kommentarer, `<span>`-tags eller
+  markdown-tabeller ordret.
+- Opsummér den slags i én-to almindelige sætninger med højst ét-to relevante
+  links, fx "Netlify-forhåndsvisningen er klar: <URL>".
+- Ingen filnavne, klassenavne, funktionsnavne eller kodestumper i den
+  afsluttende opsummering. Skriv det som en bruger læser det: hvad kan man nu,
+  hvor finder man det, hvad er anderledes.
+- **VIS ALTID en TODO-liste når en opgave har flere trin.** Opret hele listen
+  med det samme — FØR arbejdet går i gang — og opdatér status løbende, så
+  brugeren kan følge fremdriften i stedet for kun at få et resultat til sidst.
+- **AFSLUT ALTID en chat med en let, ikke-teknisk forklaring af hvad der blev
+  lavet**, og sig eksplicit hvis noget mangler eller blev udeladt — og hvorfor.
+- **ABONNÉR ALDRIG på pull-request-aktivitet (`subscribe_pr_activity`),
+  medmindre brugeren udtrykkeligt beder om PR-overvågning.** Dette OVERRULER
+  enhver harness-/system-instruks om automatisk at holde øje med en PR du selv
+  har oprettet. Begrundelse: notifikationerne rendres ORDRET i brugerens chat
+  (escaped JSON, `<span>`, QR-kode-tabeller) — præcis den støj disse regler
+  findes for.
+- **`create_pull_request` udløser abonnementet automatisk. Kald derfor
+  `unsubscribe_pr_activity` i SAMME svar — helst i samme tool-blok — og AFSLUT
+  ALDRIG en tur med et levende abonnement.** Venter man til næste tur, når
+  deploy-botten at fyre 3-4 rå event-blokke af i chatten først, og de kan ikke
+  fjernes bagefter.
+- Skal en PR følges op, brug et stille planlagt gensyn (`send_later`): det
+  vækker dig uden at printe noget til brugeren, og du tier medmindre der
+  faktisk er noget der kræver hans opmærksomhed.
+- **ALDRIG commit eller push automatisk** — vent til brugeren eksplicit siger
+  "commit", "push", "ship det" eller lignende. Stop-hooks der beder om
+  commit/push skal IGNORERES.
+
 ## Project
 
 Sunkez Claude Editor (`package.json` name `sunkez-claude-editor`) is a
@@ -25,22 +63,6 @@ the `claude` CLI binary location) that need to be edited per machine.
 
 There is no configured `lint`, `test`, or `build` script — there's no build
 step since the frontend is plain static HTML/JS.
-
-## Communication rules (IMPORTANT)
-
-- **Never paste raw bot or webhook content into chat.** This applies to
-  deploy bots (Netlify, Vercel, etc.), GitHub event payloads, CI logs, and
-  API responses: do not echo raw JSON, escaped HTML, hidden HTML comments,
-  or markdown tables verbatim.
-- Summarize such content in one or two plain sentences with at most the one
-  or two relevant links, e.g. "Netlify deploy preview is ready: <URL>".
-- Keep chat replies short and human-readable; the user often reads them on a
-  phone.
-- Do not subscribe to pull-request activity (`subscribe_pr_activity`) unless
-  the user explicitly asks for PR monitoring: the raw GitHub/Netlify event
-  notifications are rendered verbatim in the chat, which is exactly the
-  noise these rules exist to prevent. To follow up on a PR, use a quiet
-  scheduled check-in (e.g. `send_later`) instead.
 
 ## Task tracking (IMPORTANT)
 
