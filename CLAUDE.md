@@ -2,6 +2,18 @@
 
 Guidance for Claude Code when working in this repository.
 
+## Opgaver: lav dem alle — ingen tavse udeladelser (brugerinstruks 2026-10-04, gælder ALLE Thomas' repoer)
+
+Giver Thomas x opgaver, er det fordi han vil have alle x lavet. Spring aldrig én
+over for så at spørge "skal jeg også lave den?" — det er derfor han gav den.
+Undtagelsen er kun når en opgave REELT ikke kan laves (mangler adgang, kræver en
+beslutning kun han kan tage, er destruktiv/udadvendt). **Dér må den ikke bare
+nævnes i en bisætning eller langt oppe i svaret:** efter hver runde stilles et
+DIREKTE spørgsmål pr. ikke-lavet ting (helst med `AskUserQuestion`), med én linje
+om hvorfor den ikke blev lavet, så han kan vurdere om den skal laves. Ingen åbne
+tasks efterlades uden at han udtrykkeligt er blevet spurgt. Det gælder også ting
+du SELV opdager undervejs og vælger ikke at lave.
+
 ## Kommunikation i chatten (LÆS FØRST — går forud for alt andet)
 
 Brugeren er UIX-mand, ikke koder, og læser ofte svarene på en telefon. Chatten
